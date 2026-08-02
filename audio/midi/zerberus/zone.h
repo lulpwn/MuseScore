@@ -21,7 +21,7 @@ class Channel;
 //---------------------------------------------------------
 
 enum class Trigger : char {
-      ATTACK, RELEASE, FIRST, LEGATO, CC
+      ATTACK, RELEASE_TRIGGER, FIRST, LEGATO, CC
       };
 
 //---------------------------------------------------------

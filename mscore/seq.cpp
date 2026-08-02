@@ -30,6 +30,7 @@
 #include "audio/midi/msynthesizer.h"
 
 #include "libmscore/audio.h"
+#include "libmscore/arpeggio.h"
 #include "libmscore/chord.h"
 #include "libmscore/measure.h"
 #include "libmscore/note.h"
@@ -44,6 +45,8 @@
 #include "libmscore/utils.h"
 
 #include "pianoroll/pianoroll.h"
+
+#include <array>
 
 #ifdef USE_PORTMIDI
 #if defined(Q_OS_MAC) || defined(Q_OS_WIN)
@@ -807,6 +810,34 @@ void Seq::process(unsigned framesPerPeriod, float* buffer)
 
       processMessages();
 
+      // A seek can be processed while the transport is still stopped, after
+      // which playback initialisation may clear CC64 again.  Use the exact
+      // requested tick on the first playing block, then reassert the resolved
+      // state once on the following block after plug-in startup resets have
+      // already been processed.
+      if (state == Transport::PLAY && !inCountIn) {
+            if (pedalChasePending) {
+                  chaseSustainPedals(pedalChaseTick);
+                  pedalChasePending = false;
+                  pedalChaseReassertPending = true;
+                  }
+            else if (pedalChaseReassertPending) {
+                  chaseSustainPedals(pedalChaseTick);
+                  pedalChaseReassertPending = false;
+                  }
+            }
+
+      // Keep hosted instruments informed about the real transport state.  VST3
+      // plug-ins use this for tempo-synchronised envelopes, delays and internal
+      // sequencing; the previous host always reported 120 BPM and "playing".
+      double tempoBpm = 120.0;
+      if (cs) {
+            const double scoreTempo = curTempo();
+            if (scoreTempo > 0.0)
+                  tempoBpm = scoreTempo * cs->tempomap()->relTempo() * 60.0;
+            }
+      _synti->setPlaybackState(state == Transport::PLAY, tempoBpm);
+
       if (state == Transport::PLAY) {
             if (!cs)
                   return;
@@ -847,8 +878,16 @@ void Seq::process(unsigned framesPerPeriod, float* buffer)
                               }
                         }
                   else {
-                        qreal playPosSeconds = cs->utick2utime(playPosUTick);
-                        int playPosFrame = playPosSeconds * MScore::sampleRate;
+                        int playPosFrame;
+                        if (ornamentPreRollActive && playPosUTick < ornamentPreRollAnchorTick) {
+                              const qreal frameDelta = qreal(ornamentPreRollAnchorTick - playPosUTick)
+                                 * MScore::sampleRate / ornamentPreRollTicksPerSecond;
+                              playPosFrame = ornamentPreRollAnchorFrame - qRound(frameDelta);
+                              }
+                        else {
+                              qreal playPosSeconds = cs->utick2utime(playPosUTick);
+                              playPosFrame = playPosSeconds * MScore::sampleRate;
+                              }
                         if (playPosFrame >= periodEndFrame)
                               break;
                         n = playPosFrame - *pPlayFrame;
@@ -910,14 +949,23 @@ void Seq::process(unsigned framesPerPeriod, float* buffer)
                               }
                         }
                   const NPlayEvent& event = (*pPlayPos)->second;
-                  playEvent(event, framePos);
-                  if (event.type() == ME_TICK1) {
-                        tickRemain = tickLength;
-                        tickVolume = event.velo() ? qreal(event.value()) / 127.0 : 1.0;
+                  bool deliverEvent = true;
+                  if (!inCountIn && ornamentPreRollActive) {
+                        if (playPosUTick < ornamentPreRollAnchorTick)
+                              deliverEvent = isPreBeatOrnamentEvent(event, ornamentPreRollAnchorScoreTick);
+                        else
+                              ornamentPreRollActive = false;
                         }
-                  else if (event.type() == ME_TICK2) {
-                        tackRemain = tackLength;
-                        tackVolume = event.velo() ? qreal(event.value()) / 127.0 : 1.0;
+                  if (deliverEvent) {
+                        playEvent(event, framePos);
+                        if (event.type() == ME_TICK1) {
+                              tickRemain = tickLength;
+                              tickVolume = event.velo() ? qreal(event.value()) / 127.0 : 1.0;
+                              }
+                        else if (event.type() == ME_TICK2) {
+                              tackRemain = tackLength;
+                              tackVolume = event.velo() ? qreal(event.value()) / 127.0 : 1.0;
+                              }
                         }
                   mutex.lock();
                   ++(*pPlayPos);
@@ -1196,8 +1244,41 @@ void Seq::setPos(int utick)
       if (utick != ucur)
             updateSynthesizerState(ucur, utick);
 
-      playFrame = cs->utick2utime(utick) * MScore::sampleRate;
+      ornamentPreRollActive = false;
+      ornamentPreRollAnchorTick = utick;
+      ornamentPreRollAnchorScoreTick = cs->repeatList().utick2tick(utick);
+      ornamentPreRollAnchorFrame = cs->utick2utime(utick) * MScore::sampleRate;
+      playFrame = ornamentPreRollAnchorFrame;
       playPos   = events.lower_bound(utick);
+
+      // Starting directly on an ornamented beat still needs time in which to
+      // perform its negative-offset notes.  Find only pre-beat events belonging
+      // to this exact anchor, run a short silent pre-roll, and suppress unrelated
+      // events from the preceding score region.
+      auto preRollBegin = playPos;
+      const int preRollLowerTick = utick - preBeatOrnamentSpanTicks(ornamentPreRollAnchorScoreTick) - 2;
+      auto event = playPos;
+      while (event != events.cbegin()) {
+            --event;
+            if (event->first < preRollLowerTick)
+                  break;
+            if (!isPreBeatOrnamentEvent(event->second, ornamentPreRollAnchorScoreTick))
+                  continue;
+            preRollBegin = event;
+            }
+      if (preRollBegin != playPos) {
+            ornamentPreRollActive = true;
+            const qreal tempo = cs->tempomap()->tempo(ornamentPreRollAnchorScoreTick)
+               * cs->tempomap()->relTempo();
+            ornamentPreRollTicksPerSecond = qMax<qreal>(1.0, tempo * DIVISION);
+            const qreal frameDelta = qreal(utick - preRollBegin->first)
+               * MScore::sampleRate / ornamentPreRollTicksPerSecond;
+            playFrame = ornamentPreRollAnchorFrame - qRound(frameDelta);
+            playPos = preRollBegin;
+            }
+      pedalChaseTick = utick;
+      pedalChasePending = true;
+      pedalChaseReassertPending = false;
       mutex.unlock();
       }
 
@@ -1719,6 +1800,98 @@ void Seq::updateSynthesizerState(int tick1, int tick2)
             if (i1->second.type() == ME_CONTROLLER)
                   playEvent(i1->second, 0);
             }
+      }
+
+//---------------------------------------------------------
+//   chaseSustainPedals
+//   Restore the final CC64 state at or before the playback start.  Including
+//   the exact tick is important: a pedal line beginning at the selected bar
+//   must take effect even if the first normal event block starts just after it.
+//---------------------------------------------------------
+
+void Seq::chaseSustainPedals(int utick)
+      {
+      std::array<bool, 256> channelSeen {};
+      auto event = events.upper_bound(utick);
+      while (event != events.cbegin()) {
+            --event;
+            const NPlayEvent& value = event->second;
+            if (value.type() != ME_CONTROLLER || value.controller() != CTRL_SUSTAIN)
+                  continue;
+            const unsigned channel = value.channel();
+            if (channelSeen[channel])
+                  continue;
+            channelSeen[channel] = true;
+            if (value.value() >= 64)
+                  playEvent(value, 0);
+            }
+      }
+
+//---------------------------------------------------------
+//   isPreBeatOrnamentEvent
+//---------------------------------------------------------
+
+bool Seq::isPreBeatOrnamentEvent(const NPlayEvent& event, int anchorScoreTick) const
+      {
+      if ((event.type() != ME_NOTEON && event.type() != ME_NOTEOFF) || !event.note())
+            return false;
+      Chord* eventChord = event.note()->chord();
+      if (!eventChord)
+            return false;
+      if (eventChord->isGrace()) {
+            if (!eventChord->parent() || !eventChord->parent()->isChord())
+                  return false;
+            Chord* anchorChord = toChord(eventChord->parent());
+            const QVector<Chord*> graces = anchorChord->graceNotesBefore();
+            return anchorChord->tick().ticks() == anchorScoreTick && !graces.isEmpty()
+               && graces.front()->noteType() == NoteType::ACCIACCATURA
+               && graces.front()->playBeforeBeat();
+            }
+      Arpeggio* arpeggio = eventChord->arpeggio();
+      return eventChord->tick().ticks() == anchorScoreTick && arpeggio
+         && arpeggio->playArpeggio() && arpeggio->playBeforeBeat();
+      }
+
+//---------------------------------------------------------
+//   preBeatOrnamentSpanTicks
+//---------------------------------------------------------
+
+int Seq::preBeatOrnamentSpanTicks(int anchorScoreTick) const
+      {
+      if (!cs)
+            return 0;
+      Segment* segment = cs->tick2segment(Fraction::fromTicks(anchorScoreTick), false, SegmentType::ChordRest);
+      if (!segment || segment->tick().ticks() != anchorScoreTick)
+            return 0;
+
+      int maximumSpan = 0;
+      const int tracks = cs->nstaves() * VOICES;
+      for (int track = 0; track < tracks; ++track) {
+            Element* element = segment->element(track);
+            if (!element || !element->isChord())
+                  continue;
+            Chord* chord = toChord(element);
+            Arpeggio* arpeggio = chord->arpeggio();
+            if (arpeggio && arpeggio->playArpeggio() && arpeggio->playBeforeBeat()) {
+                  const int interval = qMax(1, qRound((4.0 * DIVISION / arpeggio->noteDenominator())
+                                                     * arpeggio->Stretch()));
+                  maximumSpan = qMax(maximumSpan, interval * qMax(0, int(chord->notes().size()) - 1));
+                  }
+
+            const QVector<Chord*> graces = chord->graceNotesBefore();
+            if (!graces.isEmpty() && graces.front()->noteType() == NoteType::ACCIACCATURA
+                && graces.front()->playBeforeBeat()) {
+                  const int chordTicks = qMax(1, chord->actualTicks().ticks());
+                  int totalPermille = 0;
+                  for (Chord* grace : graces) {
+                        const int durationTicks = qMax(1, qRound(4.0 * DIVISION / grace->ornamentNoteDenominator()));
+                        totalPermille += qMax(1, qCeil((qreal(durationTicks) * 1000.0) / chordTicks));
+                        }
+                  const int graceSpan = int((qint64(chordTicks) * totalPermille) / 1000);
+                  maximumSpan = qMax(maximumSpan, graceSpan);
+                  }
+            }
+      return maximumSpan;
       }
 
 //---------------------------------------------------------

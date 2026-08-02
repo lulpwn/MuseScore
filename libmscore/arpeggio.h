@@ -23,6 +23,10 @@ enum class ArpeggioType : char {
       NORMAL, UP, DOWN, BRACKET, UP_STRAIGHT, DOWN_STRAIGHT
       };
 
+enum class ArpeggioCurveType : char {
+      LINEAR, CURVED
+      };
+
 //---------------------------------------------------------
 //   @@ Arpeggio
 //---------------------------------------------------------
@@ -35,6 +39,10 @@ class Arpeggio final : public Element {
       int _span;              // spanning staves
       std::vector<SymId> symbols;
       bool _playArpeggio;
+      bool _playBeforeBeat;
+      int _noteDenominator;
+      ArpeggioCurveType _curveType;
+      int _curveAmount;
 
       qreal _stretch;
 
@@ -95,6 +103,18 @@ class Arpeggio final : public Element {
 
       bool playArpeggio()       { return _playArpeggio; }
       void setPlayArpeggio(bool p) { _playArpeggio = p; }
+
+      bool playBeforeBeat() const { return _playBeforeBeat; }
+      void setPlayBeforeBeat(bool value) { _playBeforeBeat = value; }
+
+      int noteDenominator() const { return _noteDenominator; }
+      void setNoteDenominator(int value) { _noteDenominator = qMax(1, value); }
+
+      ArpeggioCurveType curveType() const { return _curveType; }
+      void setCurveType(ArpeggioCurveType value) { _curveType = value; }
+
+      int curveAmount() const { return _curveAmount; }
+      void setCurveAmount(int value) { _curveAmount = qBound(0, value, 100); }
 
       qreal Stretch() const             { return _stretch; }
       void setStretch(qreal val)        { _stretch = val;  }

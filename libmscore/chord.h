@@ -70,6 +70,8 @@ class Chord final : public ChordRest {
       NoteType           _noteType;      ///< mark grace notes: acciaccatura and appoggiatura
       bool               _noStem;
       PlayEventType      _playEventType; ///< play events were modified by user
+      bool               _playBeforeBeat;
+      int                _ornamentNoteDenominator;
 
       qreal _spaceLw;
       qreal _spaceRw;
@@ -178,6 +180,10 @@ class Chord final : public ChordRest {
       NoteType noteType() const       { return _noteType; }
       void setNoteType(NoteType t)    { _noteType = t; }
       bool isGrace() const            { return _noteType != NoteType::NORMAL; }
+      bool playBeforeBeat() const     { return _playBeforeBeat; }
+      void setPlayBeforeBeat(bool value) { _playBeforeBeat = value; }
+      int ornamentNoteDenominator() const { return _ornamentNoteDenominator; }
+      void setOrnamentNoteDenominator(int value) { _ornamentNoteDenominator = qMax(1, value); }
       void toGraceAfter();
       void scanElements(void* data, void (*func)(void*, Element*), bool all=true) override;
 

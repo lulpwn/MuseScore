@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>InspectorAcciaccaturaPlayback</class>
+ <widget class="QWidget" name="InspectorAcciaccaturaPlayback">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>212</width><height>105</height></rect>
+  </property>
+  <property name="accessibleName">
+   <string>Acciaccatura Playback Inspector</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <property name="spacing"><number>0</number></property>
+   <property name="leftMargin"><number>0</number></property>
+   <property name="topMargin"><number>0</number></property>
+   <property name="rightMargin"><number>0</number></property>
+   <property name="bottomMargin"><number>0</number></property>
+   <item>
+    <widget class="QFrame" name="frame">
+     <property name="frameShape"><enum>QFrame::HLine</enum></property>
+     <property name="frameShadow"><enum>QFrame::Sunken</enum></property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QToolButton" name="title">
+     <property name="font"><font><weight>75</weight><bold>true</bold></font></property>
+     <property name="text"><string>Acciaccatura playback</string></property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="panel" native="true">
+     <layout class="QGridLayout" name="gridLayout">
+      <property name="leftMargin"><number>3</number></property>
+      <property name="topMargin"><number>3</number></property>
+      <property name="rightMargin"><number>3</number></property>
+      <property name="bottomMargin"><number>3</number></property>
+      <property name="spacing"><number>3</number></property>
+      <item row="0" column="0" colspan="2">
+       <widget class="QCheckBox" name="playBeforeBeat">
+        <property name="text"><string>Play before the beat</string></property>
+       </widget>
+      </item>
+      <item row="0" column="2">
+       <widget class="Ms::ResetButton" name="resetPlayBeforeBeat" native="true">
+        <property name="accessibleName"><string>Reset 'Play before the beat' value</string></property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="labelNoteSpeed">
+        <property name="text"><string>Note speed:</string></property>
+        <property name="buddy"><cstring>noteSpeed</cstring></property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="noteSpeed">
+        <property name="accessibleName"><string>Acciaccatura note speed</string></property>
+       </widget>
+      </item>
+      <item row="1" column="2">
+       <widget class="Ms::ResetButton" name="resetNoteSpeed" native="true">
+        <property name="accessibleName"><string>Reset 'Note speed' value</string></property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>Ms::ResetButton</class>
+   <extends>QWidget</extends>
+   <header>inspector/resetButton.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <tabstops>
+  <tabstop>title</tabstop>
+  <tabstop>playBeforeBeat</tabstop>
+  <tabstop>noteSpeed</tabstop>
+ </tabstops>
+ <resources/>
+ <connections/>
+</ui>

@@ -433,7 +433,7 @@ void SfzRegion::readOp(const QString& b, const QString& data, SfzControl &c)
             if (opcode_data == "attack")
                   trigger = Trigger::ATTACK;
             else if (opcode_data == "release")
-                  trigger = Trigger::RELEASE;
+                  trigger = Trigger::RELEASE_TRIGGER;
             else if (opcode_data == "first")
                   trigger = Trigger::FIRST;
             else if (opcode_data == "legato")

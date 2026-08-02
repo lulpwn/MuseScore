@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>159</width>
-    <height>105</height>
+    <height>205</height>
    </rect>
   </property>
   <property name="accessibleName">
@@ -76,28 +76,28 @@
       <property name="spacing">
        <number>3</number>
       </property>
-      <item row="1" column="0" colspan="2">
+      <item row="0" column="0" colspan="2">
        <widget class="QCheckBox" name="playArpeggio">
         <property name="text">
          <string>Play</string>
         </property>
        </widget>
       </item>
-      <item row="0" column="0">
-       <widget class="QLabel" name="label">
+      <item row="2" column="0">
+       <widget class="QLabel" name="labelNoteSpeed">
         <property name="text">
-         <string>Stretch:</string>
+         <string>Note speed:</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignVCenter</set>
         </property>
         <property name="buddy">
-         <cstring>stretch</cstring>
+         <cstring>noteSpeed</cstring>
         </property>
        </widget>
       </item>
-      <item row="0" column="1">
-       <widget class="QDoubleSpinBox" name="stretch">
+      <item row="2" column="1">
+       <widget class="QComboBox" name="noteSpeed">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
           <horstretch>0</horstretch>
@@ -105,12 +105,12 @@
          </sizepolicy>
         </property>
         <property name="accessibleName">
-         <string>Stretch</string>
+         <string>Arpeggio note speed</string>
         </property>
        </widget>
       </item>
-      <item row="0" column="2">
-       <widget class="Ms::ResetButton" name="resetStretch" native="true">
+      <item row="2" column="2">
+       <widget class="Ms::ResetButton" name="resetNoteSpeed" native="true">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
           <horstretch>0</horstretch>
@@ -118,11 +118,11 @@
          </sizepolicy>
         </property>
         <property name="accessibleName">
-         <string>Reset 'Stretch' value</string>
+         <string>Reset 'Note speed' value</string>
         </property>
        </widget>
       </item>
-      <item row="1" column="2">
+      <item row="0" column="2">
        <widget class="Ms::ResetButton" name="resetPlayArpeggio" native="true">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
@@ -132,6 +132,74 @@
         </property>
         <property name="accessibleName">
          <string>Reset 'Play' value</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0" colspan="2">
+       <widget class="QCheckBox" name="playBeforeBeat">
+        <property name="text">
+         <string>Play before the beat</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="2">
+       <widget class="Ms::ResetButton" name="resetPlayBeforeBeat" native="true">
+        <property name="accessibleName">
+         <string>Reset 'Play before the beat' value</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="labelCurveType">
+        <property name="text">
+         <string>Curve:</string>
+        </property>
+        <property name="buddy">
+         <cstring>curveType</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QComboBox" name="curveType">
+        <property name="accessibleName">
+         <string>Arpeggio timing curve</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="2">
+       <widget class="Ms::ResetButton" name="resetCurveType" native="true">
+        <property name="accessibleName">
+         <string>Reset 'Curve' value</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="labelCurveAmount">
+        <property name="text">
+         <string>Curve amount:</string>
+        </property>
+        <property name="buddy">
+         <cstring>curveAmount</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QSpinBox" name="curveAmount">
+        <property name="suffix">
+         <string>%</string>
+        </property>
+        <property name="maximum">
+         <number>100</number>
+        </property>
+        <property name="accessibleName">
+         <string>Arpeggio curve amount</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="2">
+       <widget class="Ms::ResetButton" name="resetCurveAmount" native="true">
+        <property name="accessibleName">
+         <string>Reset 'Curve amount' value</string>
         </property>
        </widget>
       </item>
@@ -150,8 +218,11 @@
  </customwidgets>
  <tabstops>
   <tabstop>title</tabstop>
-  <tabstop>stretch</tabstop>
   <tabstop>playArpeggio</tabstop>
+  <tabstop>playBeforeBeat</tabstop>
+  <tabstop>noteSpeed</tabstop>
+  <tabstop>curveType</tabstop>
+  <tabstop>curveAmount</tabstop>
  </tabstops>
  <resources/>
  <connections/>

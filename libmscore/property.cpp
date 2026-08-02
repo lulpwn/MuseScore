@@ -355,6 +355,11 @@ static constexpr PropertyMetaData propertyList[] = {
 
       { Pid::PREFER_SHARP_FLAT,         P_TYPE::INT,            true,  "preferSharpFlat",        DUMMY_QT_TRANSLATE_NOOP("propertyName", "prefer sharps or flats")                        },
 
+      { Pid::PLAY_BEFORE_BEAT,          P_TYPE::BOOL,           false, "playBeforeBeat",         DUMMY_QT_TRANSLATE_NOOP("propertyName", "play before the beat")                         },
+      { Pid::ORNAMENT_NOTE_DENOMINATOR, P_TYPE::INT,            false, "ornamentNoteDenominator",DUMMY_QT_TRANSLATE_NOOP("propertyName", "ornament note speed")                           },
+      { Pid::ARPEGGIO_CURVE_TYPE,       P_TYPE::INT,            false, "arpeggioCurveType",      DUMMY_QT_TRANSLATE_NOOP("propertyName", "arpeggio curve type")                          },
+      { Pid::ARPEGGIO_CURVE_AMOUNT,     P_TYPE::INT,            false, "arpeggioCurveAmount",    DUMMY_QT_TRANSLATE_NOOP("propertyName", "arpeggio curve amount")                        },
+
       { Pid::END,                       P_TYPE::INT,            false, "++end++",                DUMMY_QT_TRANSLATE_NOOP("propertyName", "<invalid property>")                            }
       };
 

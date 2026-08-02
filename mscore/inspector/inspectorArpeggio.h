@@ -30,6 +30,7 @@ class InspectorArpeggio : public InspectorElementBase {
 
    public:
       InspectorArpeggio(QWidget* parent);
+      void postInit() override;
       };
 
 

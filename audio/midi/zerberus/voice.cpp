@@ -53,10 +53,10 @@ Voice::Voice(Zerberus* z)
 void Voice::stop(float time)
       {
       _state = VoiceState::STOP;
-      envelopes[V1Envelopes::RELEASE].setTime(time, _zerberus->sampleRate());
+      envelopes[V1Envelopes::RELEASE_ENVELOPE].setTime(time, _zerberus->sampleRate());
       envelopes[currentEnvelope].step();
-      envelopes[V1Envelopes::RELEASE].max = envelopes[currentEnvelope].val;
-      currentEnvelope = V1Envelopes::RELEASE;
+      envelopes[V1Envelopes::RELEASE_ENVELOPE].max = envelopes[currentEnvelope].val;
+      currentEnvelope = V1Envelopes::RELEASE_ENVELOPE;
       }
 
 //---------------------------------------------------------
@@ -115,7 +115,7 @@ void Voice::start(Channel* c, int key, int v, const Zone* zone, double durSinceN
       float curve = _velocity * _velocity / (127.0 * 127.0);
 
       double rt_decay_value = 1.0;
-      if (trigger == Trigger::RELEASE)
+      if (trigger == Trigger::RELEASE_TRIGGER)
             rt_decay_value = pow(10, (-z->rtDecay * durSinceNoteOn)/20);
       // the .005 in this calculation is made up like this:
       //    -> (offset + z->ampVeltrack*curve) being a percent value so
@@ -159,7 +159,7 @@ void Voice::start(Channel* c, int key, int v, const Zone* zone, double durSinceN
       envelopes[V1Envelopes::DECAY].offset = z->ampegSustain;
 
       envelopes[V1Envelopes::SUSTAIN].setTable(Envelope::egLin);
-      if (trigger == Trigger::RELEASE || trigger == Trigger::CC) {
+      if (trigger == Trigger::RELEASE_TRIGGER || trigger == Trigger::CC) {
             // Sample is played on noteoff. We need to stop the voice when it's done. Set the sustain duration accordingly.
             //in ZInstrument::readSample we create sample data array using frames*channels
             //so no need to devide by number of channels here, otherwise it reduces duration of samples by (Number of Channels)
@@ -172,10 +172,10 @@ void Voice::start(Channel* c, int key, int v, const Zone* zone, double durSinceN
             envelopes[V1Envelopes::SUSTAIN].setTime(std::numeric_limits<float>::infinity(), _zerberus->sampleRate());
       envelopes[V1Envelopes::SUSTAIN].setConstant(qBound(0.0f, z->ampegSustain + (z->ampegVel2Sustain * velPercent), 1.0f));
 
-      envelopes[V1Envelopes::RELEASE].setTable(Envelope::egPow);
-      envelopes[V1Envelopes::RELEASE].setVariable();
-      envelopes[V1Envelopes::RELEASE].setTime(z->ampegRelease + (z->ampegVel2Release * velPercent), _zerberus->sampleRate());
-      envelopes[V1Envelopes::RELEASE].max = envelopes[V1Envelopes::SUSTAIN].val;
+      envelopes[V1Envelopes::RELEASE_ENVELOPE].setTable(Envelope::egPow);
+      envelopes[V1Envelopes::RELEASE_ENVELOPE].setVariable();
+      envelopes[V1Envelopes::RELEASE_ENVELOPE].setTime(z->ampegRelease + (z->ampegVel2Release * velPercent), _zerberus->sampleRate());
+      envelopes[V1Envelopes::RELEASE_ENVELOPE].max = envelopes[V1Envelopes::SUSTAIN].val;
 
       _looping = false;
       }
@@ -185,7 +185,7 @@ void Voice::start(Channel* c, int key, int v, const Zone* zone, double durSinceN
 //---------------------------------------------------------
 
 void Voice::updateEnvelopes() {
-      if (_state == VoiceState::ATTACK && trigger != Trigger::RELEASE) {
+      if (_state == VoiceState::ATTACK && trigger != Trigger::RELEASE_TRIGGER) {
             while (envelopes[currentEnvelope].step() && currentEnvelope != V1Envelopes::SUSTAIN)
                   currentEnvelope++;
 
@@ -193,16 +193,16 @@ void Voice::updateEnvelopes() {
             if (currentEnvelope == V1Envelopes::SUSTAIN)
                   _state = VoiceState::PLAYING;
             }
-      else if (_state == VoiceState::ATTACK && trigger == Trigger::RELEASE) {
-            while (envelopes[currentEnvelope].step() && currentEnvelope != V1Envelopes::RELEASE)
+      else if (_state == VoiceState::ATTACK && trigger == Trigger::RELEASE_TRIGGER) {
+            while (envelopes[currentEnvelope].step() && currentEnvelope != V1Envelopes::RELEASE_ENVELOPE)
                   currentEnvelope++;
 
             // triggered by noteoff stop sample when entering release
-            if (currentEnvelope == V1Envelopes::RELEASE)
+            if (currentEnvelope == V1Envelopes::RELEASE_ENVELOPE)
                   _state = VoiceState::STOP;
             }
       else if (_state == VoiceState::STOP) {
-            if (envelopes[V1Envelopes::RELEASE].step()) {
+            if (envelopes[V1Envelopes::RELEASE_ENVELOPE].step()) {
                   off();
                   }
             }

@@ -55,6 +55,7 @@
 #cmakedefine MAC_SPARKLE_ENABLED
 #cmakedefine AEOLUS
 #cmakedefine ZERBERUS
+#cmakedefine VST3_HOST
 #cmakedefine OMR
 #cmakedefine OCR
 #cmakedefine AVSOMR

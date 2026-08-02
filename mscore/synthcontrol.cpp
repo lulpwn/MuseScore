@@ -14,6 +14,7 @@
 #include "musescore.h"
 #include "seq.h"
 #include "audio/midi/msynthesizer.h"
+#include "audio/midi/midipatch.h"
 #include "audio/midi/synthesizer.h"
 #include "audio/midi/synthesizergui.h"
 #include "mixer/mixer.h"
@@ -26,6 +27,8 @@
 #include "effects/effectgui.h"
 #include "libmscore/part.h"
 #include "libmscore/instrument.h"
+
+#include <QSet>
 
 namespace Ms {
 
@@ -53,6 +56,8 @@ SynthControl::SynthControl(QWidget* parent)
             tabWidget->insertTab(idx++, s->gui(), tr(s->name()));
             s->gui()->synthesizerChanged();
             connect(s->gui(), SIGNAL(valueChanged()), SLOT(setDirty()));
+            connect(s->gui(), SIGNAL(requestPatchRouting(QString)),
+                    SLOT(routePatchToPianos(QString)));
             }
 
       // effectA        combo box
@@ -229,6 +234,60 @@ void SynthControl::setScore(Score* s) {
       }
 
 //---------------------------------------------------------
+//   routePatchToPianos
+//---------------------------------------------------------
+
+void SynthControl::routePatchToPianos(const QString& synthesizerName)
+      {
+      if (!_score || synthesizerName.isEmpty())
+            return;
+
+      MidiPatch* patch = synti->getPatchInfo(synthesizerName, 0, 0);
+      if (!patch)
+            return;
+
+      MasterScore* score = _score->masterScore();
+      QList<Channel*> pianoChannels;
+      QSet<Channel*> seenChannels;
+      for (Part* part : score->parts()) {
+            const bool pianoPart = part->partName().contains("piano", Qt::CaseInsensitive);
+            const InstrumentList* instruments = part->instruments();
+            for (const auto& item : *instruments) {
+                  Instrument* instrument = item.second;
+                  const bool pianoInstrument = pianoPart
+                     || instrument->getId().contains("piano", Qt::CaseInsensitive);
+                  for (int channelIndex = 0; channelIndex < instrument->channel().size(); ++channelIndex) {
+                        Channel* channel = instrument->playbackChannel(channelIndex, score);
+                        if (!channel || seenChannels.contains(channel))
+                              continue;
+                        const bool pianoProgram = channel->program() >= 0 && channel->program() <= 7;
+                        if (!instrument->useDrumset() && (pianoInstrument || pianoProgram)) {
+                              seenChannels.insert(channel);
+                              if (channel->synti() != synthesizerName)
+                                    pianoChannels.append(channel);
+                              }
+                        }
+                  }
+            }
+
+      if (pianoChannels.isEmpty()) {
+            updateMixer();
+            return;
+            }
+
+      score->startCmd();
+      for (Channel* channel : pianoChannels) {
+            score->undo(new ChangePatch(score, channel, patch));
+            score->undo(new SetUserBankController(channel, true));
+            }
+      score->setLayoutAll();
+      score->endCmd();
+
+      synti->allNotesOff(-1);
+      updateMixer();
+      }
+
+//---------------------------------------------------------
 //   stop
 //---------------------------------------------------------
 
@@ -361,6 +420,7 @@ void SynthControl::saveButtonClicked()
       if (!_score)
             return;
       _score->startCmd();
+      synti->prepareState();
       SynthesizerState ss = synti->state();
       if (_dirty || !_score->synthesizerState().isDefault())
             ss.setIsDefault(false);

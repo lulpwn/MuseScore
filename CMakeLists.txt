@@ -113,6 +113,11 @@ endif (NOT APPLE AND NOT MINGW AND NOT MSVC)
 
 option(AEOLUS        "Enable pipe organ synthesizer"      OFF)
 option(ZERBERUS      "Enable experimental SFZ sampler"    ON)
+if (WIN32)
+      option(VST3_HOST "Enable VST3 instrument playback"   ON)
+else()
+      option(VST3_HOST "Enable VST3 instrument playback"   OFF)
+endif()
 option(USE_ZITA_REVERB "Enable Zita Reverb audio effect"    ON)
 option(OSC           "Enable OSC remote control protocol" ON)
 option(AVSOMR        "Enable AVSOMR import"               OFF) # AVSOMR - optical music recognition by audirevis

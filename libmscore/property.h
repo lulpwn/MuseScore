@@ -363,6 +363,11 @@ enum class Pid : short {
 
       PREFER_SHARP_FLAT,
 
+      PLAY_BEFORE_BEAT,
+      ORNAMENT_NOTE_DENOMINATOR,
+      ARPEGGIO_CURVE_TYPE,
+      ARPEGGIO_CURVE_AMOUNT,
+
       END
       };
 

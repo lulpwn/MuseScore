@@ -168,6 +168,10 @@ extern Ms::Synthesizer* createAeolus();
 extern Ms::Synthesizer* createZerberus();
 #endif
 
+#ifdef VST3_HOST
+extern Ms::Synthesizer* createVst3Synth();
+#endif
+
 #ifdef QT_NO_DEBUG
       Q_LOGGING_CATEGORY(undoRedo, "undoRedo", QtCriticalMsg);
 #else
@@ -4007,6 +4011,9 @@ MasterSynthesizer* synthesizerFactory()
 #endif
 #ifdef ZERBERUS
       ms->registerSynthesizer(createZerberus());
+#endif
+#ifdef VST3_HOST
+      ms->registerSynthesizer(createVst3Synth());
 #endif
       ms->registerEffect(0, new NoEffect);
 

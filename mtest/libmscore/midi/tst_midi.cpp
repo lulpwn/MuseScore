@@ -16,8 +16,11 @@
 #include <QTextStream>
 #include <QtTest/QtTest>
 
+#include <limits>
+
 #include "audio/exports/exportmidi.h"
 
+#include "libmscore/arpeggio.h"
 #include "libmscore/chord.h"
 #include "libmscore/durationtype.h"
 #include "libmscore/keysig.h"
@@ -84,6 +87,7 @@ class TestMidi : public QObject, public MTest
       void midiTimeStretchFermataTempoEdit();
       void midiTimeStretchFermataTempoEditContinuousView();
       void midiSingleNoteDynamics();
+      void ornamentTiming();
       };
 
 //---------------------------------------------------------
@@ -93,6 +97,124 @@ class TestMidi : public QObject, public MTest
 void TestMidi::initTestCase()
       {
       initMTest();
+      }
+
+//---------------------------------------------------------
+//   ornamentTiming
+//---------------------------------------------------------
+
+void TestMidi::ornamentTiming()
+      {
+      auto noteOnTick = [] (const EventMap& events, const Note* note) {
+            for (auto event = events.cbegin(); event != events.cend(); ++event) {
+                  if (event->second.type() == ME_NOTEON && event->second.velo() > 0
+                      && event->second.note() == note)
+                        return event->first;
+                  }
+            return std::numeric_limits<int>::min();
+            };
+      SynthesizerState synthState;
+
+      MasterScore* arpeggioScore = readScore(DIR + "testArpeggio.mscx");
+      QVERIFY(arpeggioScore);
+      Ms::Chord* arpeggioChord = nullptr;
+      for (Segment* segment = arpeggioScore->firstMeasure()->first(SegmentType::ChordRest);
+           segment; segment = segment->next(SegmentType::ChordRest)) {
+            Element* element = segment->element(0);
+            if (element && element->isChord() && toChord(element)->arpeggio()) {
+                  arpeggioChord = toChord(element);
+                  break;
+                  }
+            }
+      QVERIFY(arpeggioChord);
+      Arpeggio* arpeggio = arpeggioChord->arpeggio();
+      QCOMPARE(arpeggio->playBeforeBeat(), true);
+      QCOMPARE(arpeggio->noteDenominator(), 16);
+      QCOMPARE(arpeggio->curveType(), ArpeggioCurveType::LINEAR);
+      QCOMPARE(arpeggio->curveAmount(), 75);
+
+      EventMap events;
+      arpeggioScore->renderMidi(&events, false, false, synthState);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[0]), 240);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[1]), 360);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[2]), 480);
+
+      arpeggio->setCurveType(ArpeggioCurveType::CURVED);
+      arpeggio->setCurveAmount(75);
+      events.clear();
+      arpeggioScore->renderMidi(&events, false, false, synthState);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[0]), 240);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[1]), 428);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[2]), 480);
+
+      arpeggio->setCurveType(ArpeggioCurveType::LINEAR);
+      arpeggio->setNoteDenominator(12);
+      events.clear();
+      arpeggioScore->renderMidi(&events, false, false, synthState);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[0]), 160);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[1]), 320);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[2]), 480);
+
+      arpeggio->setPlayBeforeBeat(false);
+      arpeggio->setNoteDenominator(16);
+      events.clear();
+      arpeggioScore->renderMidi(&events, false, false, synthState);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[0]), 480);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[1]), 600);
+      QCOMPARE(noteOnTick(events, arpeggioChord->notes()[2]), 720);
+
+      arpeggio->setNoteDenominator(12);
+      arpeggio->setCurveType(ArpeggioCurveType::CURVED);
+      arpeggio->setCurveAmount(64);
+      Element* arpeggioRoundTripElement = writeReadElement(arpeggio);
+      QVERIFY(arpeggioRoundTripElement);
+      QCOMPARE(arpeggioRoundTripElement->type(), ElementType::ARPEGGIO);
+      Arpeggio* arpeggioRoundTrip = static_cast<Arpeggio*>(arpeggioRoundTripElement);
+      QCOMPARE(arpeggioRoundTrip->playBeforeBeat(), false);
+      QCOMPARE(arpeggioRoundTrip->noteDenominator(), 12);
+      QCOMPARE(arpeggioRoundTrip->curveType(), ArpeggioCurveType::CURVED);
+      QCOMPARE(arpeggioRoundTrip->curveAmount(), 64);
+      delete arpeggioRoundTrip;
+      delete arpeggioScore;
+
+      MasterScore* graceScore = readScore(DIR + "testGraceBefore.mscx");
+      QVERIFY(graceScore);
+      Segment* firstSegment = graceScore->firstMeasure()->first(SegmentType::ChordRest);
+      QVERIFY(firstSegment && firstSegment->element(0) && firstSegment->element(0)->isChord());
+      Ms::Chord* anchorChord = toChord(firstSegment->element(0));
+      QVERIFY(!anchorChord->graceNotesBefore().isEmpty());
+      Ms::Chord* acciaccatura = anchorChord->graceNotesBefore().front();
+      QCOMPARE(acciaccatura->noteType(), NoteType::ACCIACCATURA);
+      QCOMPARE(acciaccatura->playBeforeBeat(), true);
+      QCOMPARE(acciaccatura->ornamentNoteDenominator(), 16);
+
+      events.clear();
+      graceScore->renderMidi(&events, false, false, synthState);
+      QCOMPARE(noteOnTick(events, acciaccatura->upNote()), -120);
+      QCOMPARE(noteOnTick(events, anchorChord->upNote()), 0);
+
+      acciaccatura->setOrnamentNoteDenominator(12);
+      events.clear();
+      graceScore->renderMidi(&events, false, false, synthState);
+      QCOMPARE(noteOnTick(events, acciaccatura->upNote()), -160);
+      QCOMPARE(noteOnTick(events, anchorChord->upNote()), 0);
+
+      acciaccatura->setPlayBeforeBeat(false);
+      acciaccatura->setOrnamentNoteDenominator(16);
+      events.clear();
+      graceScore->renderMidi(&events, false, false, synthState);
+      QCOMPARE(noteOnTick(events, acciaccatura->upNote()), 0);
+      QCOMPARE(noteOnTick(events, anchorChord->upNote()), 120);
+
+      acciaccatura->setOrnamentNoteDenominator(12);
+      Element* acciaccaturaRoundTripElement = writeReadElement(acciaccatura);
+      QVERIFY(acciaccaturaRoundTripElement);
+      QCOMPARE(acciaccaturaRoundTripElement->type(), ElementType::CHORD);
+      Ms::Chord* acciaccaturaRoundTrip = static_cast<Ms::Chord*>(acciaccaturaRoundTripElement);
+      QCOMPARE(acciaccaturaRoundTrip->playBeforeBeat(), false);
+      QCOMPARE(acciaccaturaRoundTrip->ornamentNoteDenominator(), 12);
+      delete acciaccaturaRoundTrip;
+      delete graceScore;
       }
 
 

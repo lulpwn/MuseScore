@@ -108,7 +108,7 @@ enum V1Envelopes : int {
       HOLD,
       DECAY,
       SUSTAIN,
-      RELEASE,
+      RELEASE_ENVELOPE,
       COUNT
       };
 
@@ -168,7 +168,7 @@ class Voice {
       bool isSustained() const    { return _state == VoiceState::SUSTAINED; }
       bool isOff() const          { return _state == VoiceState::OFF; }
       bool isStopped() const      { return _state == VoiceState::STOP; }
-      void stop()                 { envelopes[currentEnvelope].step(); envelopes[V1Envelopes::RELEASE].max = envelopes[currentEnvelope].val; currentEnvelope = V1Envelopes::RELEASE; _state = VoiceState::STOP;      }
+      void stop()                 { envelopes[currentEnvelope].step(); envelopes[V1Envelopes::RELEASE_ENVELOPE].max = envelopes[currentEnvelope].val; currentEnvelope = V1Envelopes::RELEASE_ENVELOPE; _state = VoiceState::STOP;      }
       void stop(float time);
       void sustained()            { _state = VoiceState::SUSTAINED; }
       void off()                  { _state = VoiceState::OFF;       }

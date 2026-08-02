@@ -222,6 +222,8 @@ Chord::Chord(Score* s)
       _stemSlash        = 0;
       _noStem           = false;
       _playEventType    = PlayEventType::Auto;
+      _playBeforeBeat   = true;
+      _ornamentNoteDenominator = 16;
       _spaceLw          = 0.;
       _spaceRw          = 0.;
       _crossMeasure     = CrossMeasure::UNKNOWN;
@@ -261,6 +263,8 @@ Chord::Chord(const Chord& c, bool link)
       _graceIndex     = c._graceIndex;
       _noStem         = c._noStem;
       _playEventType  = c._playEventType;
+      _playBeforeBeat = c._playBeforeBeat;
+      _ornamentNoteDenominator = c._ornamentNoteDenominator;
       _stemDirection  = c._stemDirection;
       _noteType       = c._noteType;
       _crossMeasure   = CrossMeasure::UNKNOWN;
@@ -1002,6 +1006,8 @@ void Chord::write(XmlWriter& xml) const
                   break;
             case NoteType::ACCIACCATURA:
                   xml.tagE("acciaccatura");
+                  writeProperty(xml, Pid::PLAY_BEFORE_BEAT);
+                  writeProperty(xml, Pid::ORNAMENT_NOTE_DENOMINATOR);
                   break;
             case NoteType::APPOGGIATURA:
                   xml.tagE("appoggiatura");
@@ -1098,6 +1104,10 @@ bool Chord::readProperties(XmlReader& e)
             _noteType = NoteType::ACCIACCATURA;
             e.readNext();
             }
+      else if (readProperty(tag, e, Pid::PLAY_BEFORE_BEAT))
+            ;
+      else if (readProperty(tag, e, Pid::ORNAMENT_NOTE_DENOMINATOR))
+            ;
       else if (tag == "grace4") {
             _noteType = NoteType::GRACE4;
             e.readNext();
@@ -2823,6 +2833,8 @@ QVariant Chord::getProperty(Pid propertyId) const
       switch (propertyId) {
             case Pid::NO_STEM:        return noStem();
             case Pid::STEM_DIRECTION: return QVariant::fromValue<Direction>(stemDirection());
+            case Pid::PLAY_BEFORE_BEAT: return playBeforeBeat();
+            case Pid::ORNAMENT_NOTE_DENOMINATOR: return ornamentNoteDenominator();
             default:
                   return ChordRest::getProperty(propertyId);
             }
@@ -2837,6 +2849,8 @@ QVariant Chord::propertyDefault(Pid propertyId) const
       switch (propertyId) {
             case Pid::NO_STEM:        return false;
             case Pid::STEM_DIRECTION: return QVariant::fromValue<Direction>(Direction::AUTO);
+            case Pid::PLAY_BEFORE_BEAT: return true;
+            case Pid::ORNAMENT_NOTE_DENOMINATOR: return 16;
             default:
                   return ChordRest::propertyDefault(propertyId);
             }
@@ -2854,6 +2868,14 @@ bool Chord::setProperty(Pid propertyId, const QVariant& v)
                   break;
             case Pid::STEM_DIRECTION:
                   setStemDirection(v.value<Direction>());
+                  break;
+            case Pid::PLAY_BEFORE_BEAT:
+                  setPlayBeforeBeat(v.toBool());
+                  score()->setPlaylistDirty();
+                  break;
+            case Pid::ORNAMENT_NOTE_DENOMINATOR:
+                  setOrnamentNoteDenominator(v.toInt());
+                  score()->setPlaylistDirty();
                   break;
             default:
                   return ChordRest::setProperty(propertyId, v);

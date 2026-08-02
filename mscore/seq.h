@@ -148,6 +148,14 @@ class Seq : public QObject, public Sequencer {
       int playFrame;                      // current play position in samples, relative to the first frame of playback
       int countInPlayFrame;               // current play position in samples, relative to the first frame of countin
       int endUTick;                       // the final tick of midi events collected by collectEvents()
+      bool pedalChasePending { false };   // restore CC64 state after playback starts/seeks
+      bool pedalChaseReassertPending { false }; // repeat after the plug-in's first processing block
+      int pedalChaseTick { 0 };           // exact requested tick, without frame/time rounding
+      bool ornamentPreRollActive { false };
+      int ornamentPreRollAnchorTick { 0 };
+      int ornamentPreRollAnchorScoreTick { 0 };
+      int ornamentPreRollAnchorFrame { 0 };
+      qreal ornamentPreRollTicksPerSecond { DIVISION * 2.0 };
 
       EventMap::const_iterator playPos;   // moved in real time thread
       EventMap::const_iterator countInPlayPos;
@@ -198,6 +206,9 @@ class Seq : public QObject, public Sequencer {
       void seekCommon(int utick);
       void unmarkNotes();
       void updateSynthesizerState(int tick1, int tick2);
+      void chaseSustainPedals(int utick);
+      bool isPreBeatOrnamentEvent(const NPlayEvent& event, int anchorScoreTick) const;
+      int preBeatOrnamentSpanTicks(int anchorScoreTick) const;
       void addCountInClicks();
 
       int getPlayStartUtick();

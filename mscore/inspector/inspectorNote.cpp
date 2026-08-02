@@ -22,6 +22,8 @@
 #include "inspector.h"
 #include "inspectorNote.h"
 
+#include <array>
+
 namespace Ms {
 
 //---------------------------------------------------------
@@ -33,7 +35,13 @@ InspectorNote::InspectorNote(QWidget* parent)
       {
       s.setupUi(addWidget());
       c.setupUi(addWidget());
+      acciaccaturaWidget = addWidget();
+      a.setupUi(acciaccaturaWidget);
       n.setupUi(addWidget());
+
+      const std::array<int, 9> noteDenominators {{ 4, 6, 8, 12, 16, 24, 32, 48, 64 }};
+      for (int denominator : noteDenominators)
+            a.noteSpeed->addItem(QString("1/%1").arg(denominator), denominator);
 
       static const NoteHead::Scheme schemes[] = {
             NoteHead::Scheme::HEAD_AUTO,
@@ -115,11 +123,15 @@ InspectorNote::InspectorNote(QWidget* parent)
             { Pid::NO_STEM,        1, c.stemless,      c.resetStemless      },
             { Pid::STEM_DIRECTION, 1, c.stemDirection, c.resetStemDirection },
 
+            { Pid::PLAY_BEFORE_BEAT, 1, a.playBeforeBeat, a.resetPlayBeforeBeat },
+            { Pid::ORNAMENT_NOTE_DENOMINATOR, 1, a.noteSpeed, a.resetNoteSpeed },
+
             { Pid::LEADING_SPACE,  2, s.leadingSpace,  s.resetLeadingSpace  },
             };
       const std::vector<InspectorPanel> ppList = {
             { s.title, s.panel },
             { c.title, c.panel },
+            { a.title, a.panel },
             { n.title, n.panel },
             };
       mapSignals(iiList, ppList);
@@ -167,6 +179,7 @@ void InspectorNote::setElement()
             }
 
       bool nograce = !note->chord()->isGrace();
+      acciaccaturaWidget->setVisible(note->chord()->noteType() == NoteType::ACCIACCATURA);
       s.leadingSpace->setEnabled(nograce);
       s.resetLeadingSpace->setEnabled(nograce && s.leadingSpace->value());
 

@@ -100,6 +100,16 @@ void MasterSynthesizer::play(const NPlayEvent& event, unsigned syntiIdx)
       }
 
 //---------------------------------------------------------
+//   setPlaybackState
+//---------------------------------------------------------
+
+void MasterSynthesizer::setPlaybackState(bool playing, double tempoBpm)
+      {
+      for (Synthesizer* s : _synthesizer)
+            s->setPlaybackState(playing, tempoBpm);
+      }
+
+//---------------------------------------------------------
 //   synthNameToIndex
 //---------------------------------------------------------
 
@@ -391,6 +401,16 @@ bool MasterSynthesizer::setState(const SynthesizerState& ss)
       }
 
 //---------------------------------------------------------
+//   prepareState
+//---------------------------------------------------------
+
+void MasterSynthesizer::prepareState()
+      {
+      for (Synthesizer* s : _synthesizer)
+            s->prepareState();
+      }
+
+//---------------------------------------------------------
 //   state
 //---------------------------------------------------------
 
@@ -421,6 +441,7 @@ SynthesizerState MasterSynthesizer::state() const
 
 bool MasterSynthesizer::storeState()
       {
+      prepareState();
       QString s(dataPath + "/synthesizer.xml");
       QFile f(s);
       if (!f.open(QIODevice::WriteOnly)) {

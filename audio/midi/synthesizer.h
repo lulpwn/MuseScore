@@ -15,6 +15,8 @@
 
 #include "libmscore/synthesizerstate.h"
 
+#include <atomic>
+
 namespace Ms {
 
 struct MidiPatch;
@@ -39,7 +41,7 @@ struct SoundFontInfo {
 //---------------------------------------------------------
 
 class Synthesizer {
-      bool _active;
+      std::atomic<bool> _active;
 
    protected:
       float _sampleRate { 44100.0f };
@@ -64,18 +66,22 @@ class Synthesizer {
 
       virtual void process(unsigned, float*, float*, float*) = 0;
       virtual void play(const PlayEvent&) = 0;
+      virtual void setPlaybackState(bool, double) {}
 
       virtual const QList<MidiPatch*>& getPatchInfo() const = 0;
 
       // get/set synthesizer state
+      // prepareState() may perform an explicit, potentially expensive snapshot.
+      // state() itself must remain cheap because the playback renderer calls it.
+      virtual void prepareState() {}
       virtual SynthesizerGroup state() const = 0;
       virtual bool setState(const SynthesizerGroup&) = 0;
       virtual void setValue(int, double) {}
       virtual double value(int) const { return 0.0; }
 
-      void reset()                    { _active = false; }
-      bool active() const             { return _active; }
-      void setActive(bool val = true) { _active = val;  }
+      virtual void reset()            { _active.store(false, std::memory_order_release); }
+      bool active() const             { return _active.load(std::memory_order_acquire); }
+      void setActive(bool val = true) { _active.store(val, std::memory_order_release); }
 
       virtual void allSoundsOff(int /*channel*/) {}
       virtual void allNotesOff(int /*channel*/) {}

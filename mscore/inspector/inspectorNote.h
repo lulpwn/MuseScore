@@ -18,6 +18,7 @@
 #include "ui_inspector_note.h"
 #include "ui_inspector_chord.h"
 #include "ui_inspector_segment.h"
+#include "ui_inspector_acciaccatura_playback.h"
 
 namespace Ms {
 
@@ -31,6 +32,8 @@ class InspectorNote : public InspectorElementBase {
       Ui::InspectorNote    n;
       Ui::InspectorChord   c;
       Ui::InspectorSegment s;
+      Ui::InspectorAcciaccaturaPlayback a;
+      QWidget* acciaccaturaWidget { nullptr };
 
       void block(bool);
 

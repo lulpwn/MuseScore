@@ -38,6 +38,7 @@ enum class Transport : char;
 class Portaudio : public Driver {
       bool initialized;
       int _sampleRate;
+      unsigned long _bufferFrames { 512 };
 
       Transport state;
       bool seekflag;

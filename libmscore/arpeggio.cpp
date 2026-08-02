@@ -47,6 +47,10 @@ Arpeggio::Arpeggio(Score* s)
       _userLen1 = 0.0;
       _userLen2 = 0.0;
       _playArpeggio = true;
+      _playBeforeBeat = true;
+      _noteDenominator = 16;
+      _curveType = ArpeggioCurveType::LINEAR;
+      _curveAmount = 75;
       _stretch = 1.0;
       }
 
@@ -78,6 +82,10 @@ void Arpeggio::write(XmlWriter& xml) const
             xml.tag("span", _span);
       writeProperty(xml, Pid::PLAY);
       writeProperty(xml, Pid::TIME_STRETCH);
+      writeProperty(xml, Pid::PLAY_BEFORE_BEAT);
+      writeProperty(xml, Pid::ORNAMENT_NOTE_DENOMINATOR);
+      writeProperty(xml, Pid::ARPEGGIO_CURVE_TYPE);
+      writeProperty(xml, Pid::ARPEGGIO_CURVE_AMOUNT);
       xml.etag();
       }
 
@@ -101,6 +109,14 @@ void Arpeggio::read(XmlReader& e)
                  _playArpeggio = e.readBool();
             else if (tag == "timeStretch")
                   _stretch = e.readDouble();
+            else if (tag == "playBeforeBeat")
+                  _playBeforeBeat = e.readBool();
+            else if (tag == "ornamentNoteDenominator")
+                  setNoteDenominator(e.readInt());
+            else if (tag == "arpeggioCurveType")
+                  _curveType = ArpeggioCurveType(e.readInt());
+            else if (tag == "arpeggioCurveAmount")
+                  setCurveAmount(e.readInt());
             else if (!Element::readProperties(e))
                   e.unknown();
             }
@@ -653,6 +669,14 @@ QVariant Arpeggio::getProperty(Pid propertyId) const
                   return userLen2();
             case Pid::PLAY:
                   return _playArpeggio;
+            case Pid::PLAY_BEFORE_BEAT:
+                  return _playBeforeBeat;
+            case Pid::ORNAMENT_NOTE_DENOMINATOR:
+                  return _noteDenominator;
+            case Pid::ARPEGGIO_CURVE_TYPE:
+                  return int(_curveType);
+            case Pid::ARPEGGIO_CURVE_AMOUNT:
+                  return _curveAmount;
             default:
                   break;
             }
@@ -681,12 +705,26 @@ bool Arpeggio::setProperty(Pid propertyId, const QVariant& val)
             case Pid::PLAY:
                   setPlayArpeggio(val.toBool());
                   break;
+            case Pid::PLAY_BEFORE_BEAT:
+                  setPlayBeforeBeat(val.toBool());
+                  break;
+            case Pid::ORNAMENT_NOTE_DENOMINATOR:
+                  setNoteDenominator(val.toInt());
+                  break;
+            case Pid::ARPEGGIO_CURVE_TYPE:
+                  setCurveType(ArpeggioCurveType(val.toInt()));
+                  break;
+            case Pid::ARPEGGIO_CURVE_AMOUNT:
+                  setCurveAmount(val.toInt());
+                  break;
             default:
                   if (!Element::setProperty(propertyId, val))
                         return false;
                   break;
             }
       triggerLayout();
+      if (score())
+            score()->setPlaylistDirty();
       return true;
       }
 
@@ -705,6 +743,14 @@ QVariant Arpeggio::propertyDefault(Pid propertyId) const
                   return 1.0;
             case Pid::PLAY:
                   return true;
+            case Pid::PLAY_BEFORE_BEAT:
+                  return true;
+            case Pid::ORNAMENT_NOTE_DENOMINATOR:
+                  return 16;
+            case Pid::ARPEGGIO_CURVE_TYPE:
+                  return int(ArpeggioCurveType::LINEAR);
+            case Pid::ARPEGGIO_CURVE_AMOUNT:
+                  return 75;
             default:
                   break;
             }

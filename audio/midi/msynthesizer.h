@@ -83,6 +83,7 @@ class MasterSynthesizer : public QObject {
 
       void process(unsigned, float*);
       void play(const NPlayEvent&, unsigned);
+      void setPlaybackState(bool playing, double tempoBpm);
 
       void setMasterTuning(double val);
       double masterTuning() const      { return _masterTuning; }
@@ -94,6 +95,7 @@ class MasterSynthesizer : public QObject {
       MidiPatch* getPatchInfo(QString synti, int bank, int program);
 
       SynthesizerState state() const;
+      void prepareState();
       bool setState(const SynthesizerState&);
 
       Synthesizer* synthesizer(const QString& name);

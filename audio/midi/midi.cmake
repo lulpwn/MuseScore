@@ -54,10 +54,22 @@ if (ZERBERUS)
 
 endif (ZERBERUS)
 
+set (VST3_SRC )
+if (VST3_HOST)
+    set (VST3_DIR ${CMAKE_CURRENT_LIST_DIR}/vst3)
+    set (VST3_SRC
+        ${VST3_DIR}/vst3synth.cpp
+        ${VST3_DIR}/vst3synth.h
+        ${VST3_DIR}/vst3gui.cpp
+        ${VST3_DIR}/vst3gui.h
+        )
+endif (VST3_HOST)
+
 set (MIDI_SRC
 
     ${FLUID_SRC}
     ${ZERBERUS_SRC}
+    ${VST3_SRC}
 
     ${CMAKE_CURRENT_LIST_DIR}/event.cpp
     ${CMAKE_CURRENT_LIST_DIR}/event.h

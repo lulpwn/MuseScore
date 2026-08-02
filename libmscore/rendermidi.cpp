@@ -15,6 +15,9 @@
  render score into event list
 */
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <set>
 
 #include "arpeggio.h"
@@ -24,6 +27,7 @@
 #include "chord.h"
 #include "durationtype.h"
 #include "dynamic.h"
+#include "easeInOut.h"
 #include "easeInOut.h"
 #include "glissando.h"
 #include "hairpin.h"
@@ -1090,6 +1094,15 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
       const int tick1 = chunk.tick1();
       const int tick2 = chunk.tick2();
 
+      // This preference is the requested repedal gap after CC64 off.  Pedal-off
+      // stays on the notated boundary and the following pedal-down is delayed.
+      // Accept the magnitude of legacy negative values as well.
+      const long long configuredPedalGap = static_cast<long long>(MScore::pedalEventsMinTicks);
+      const long long pedalGapMagnitude = configuredPedalGap < 0
+                                        ? -configuredPedalGap : configuredPedalGap;
+      const int pedalResetGap = static_cast<int>(std::min<long long>(
+         pedalGapMagnitude, std::numeric_limits<int>::max() / 4));
+
       std::map<int, std::vector<std::pair<int, std::pair<bool, int> > > > channelPedalEvents;
       for (const auto& sp : score->spannerMap().map()) {
             Spanner* s = sp.second;
@@ -1100,7 +1113,11 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
 
             if (s->isPedal() || s->isLetRing()) {
                   channelPedalEvents.insert({channel, std::vector<std::pair<int, std::pair<bool, int> > >()});
-                  std::vector<std::pair<int, std::pair<bool, int> > > pedalEventList = channelPedalEvents.at(channel);
+                  // Keep a reference to the accumulated events.  Copying this
+                  // vector made every following pedal line appear to have no
+                  // predecessor, so connected/overlapping pedal segments were
+                  // never corrected.
+                  std::vector<std::pair<int, std::pair<bool, int> > >& pedalEventList = channelPedalEvents.at(channel);
                   std::pair<int, std::pair<bool, int> > lastEvent;
 
                   if (!pedalEventList.empty())
@@ -1109,23 +1126,46 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
                         lastEvent = std::pair<int, std::pair<bool, int> >(0, std::pair<bool, int>(true, staff));
 
                   int st = s->tick().ticks();
+                  int currentPedalOnTick = st + tickOffset;
                   if (st >= tick1 && st < tick2) {
-                        // Handle "overlapping" pedal segments (usual case for connected pedal line)
-                        if (lastEvent.second.first == false && lastEvent.first >= (st + tickOffset + 2)) {
-                              channelPedalEvents.at(channel).pop_back();
-                              channelPedalEvents.at(channel).push_back(std::pair<int, std::pair<bool, int> >(st + tickOffset + (2 - MScore::pedalEventsMinTicks), std::pair<bool, int>(false, staff)));
+                        const int pedalBoundaryTick = st + tickOffset;
+                        // A reset gap is needed only when this line repedals a
+                        // connected/overlapping predecessor.  The first or an
+                        // isolated pedal line must engage on its notated start.
+                        if (lastEvent.second.first == false && lastEvent.first >= pedalBoundaryTick) {
+                              if (lastEvent.first > pedalBoundaryTick) {
+                                    int previousOnTick = 0;
+                                    bool hasPreviousOn = false;
+                                    for (auto i = pedalEventList.rbegin(); i != pedalEventList.rend(); ++i) {
+                                          if (i->second.first) {
+                                                previousOnTick = i->first;
+                                                hasPreviousOn = true;
+                                                break;
+                                                }
+                                          }
+                                    const int correctedOffTick = hasPreviousOn
+                                       ? std::max(previousOnTick + 1, pedalBoundaryTick)
+                                       : pedalBoundaryTick;
+                                    pedalEventList.pop_back();
+                                    pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
+                                       correctedOffTick, std::pair<bool, int>(false, staff)));
+                                    }
+                              currentPedalOnTick += pedalResetGap;
                               }
-                        int a = st + tickOffset + (3 - MScore::pedalEventsMinTicks);
-                        channelPedalEvents.at(channel).push_back(std::pair<int, std::pair<bool, int> >(a, std::pair<bool, int>(true, staff)));
+                        pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
+                           currentPedalOnTick, std::pair<bool, int>(true, staff)));
                         }
                   if (s->tick2().ticks() >= tick1 && s->tick2().ticks() <= tick2) {
-                        int t = s->tick2().ticks() + tickOffset + (2 - MScore::pedalEventsMinTicks);
+                        int t = s->tick2().ticks() + tickOffset;
+                        // Very short pedal lines cannot provide the full reset
+                        // gap; always leave at least one tick of pedal-down time.
+                        t = std::max(currentPedalOnTick + 1, t);
                         if (!score->repeatList().empty()) {
                               const RepeatSegment& lastRepeat = *score->repeatList().back();
                               if (t > lastRepeat.utick + lastRepeat.len())
                                     t = lastRepeat.utick + lastRepeat.len();
                               }
-                        channelPedalEvents.at(channel).push_back(std::pair<int, std::pair<bool, int> >(t, std::pair<bool, int>(false, staff)));
+                        pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(t, std::pair<bool, int>(false, staff)));
                         }
                   }
             else if (s->isVibrato()) {
@@ -1373,11 +1413,16 @@ void renderTremolo(Chord* chord, QList<NoteEventList>& ell)
 void renderArpeggio(Chord *chord, QList<NoteEventList> & ell)
       {
       int notes = int(chord->notes().size());
-      int l = 64;
-      while (l && (l * notes > chord->upNote()->playTicks()))
-            l = 2*l / 3;
+      if (notes <= 0)
+            return;
+      Arpeggio* arpeggio = chord->arpeggio();
+      const int chordTicks = qMax(1, chord->upNote()->playTicks());
+      const int noteStepTicks = qMax(1, qRound((4.0 * DIVISION / arpeggio->noteDenominator()) * arpeggio->Stretch()));
+      int spreadTicks = noteStepTicks * qMax(0, notes - 1);
+      if (!arpeggio->playBeforeBeat())
+            spreadTicks = qMin(spreadTicks, chordTicks - 1);
       int start, end, step;
-      bool up = chord->arpeggio()->arpeggioType() != ArpeggioType::DOWN && chord->arpeggio()->arpeggioType() != ArpeggioType::DOWN_STRAIGHT;
+      bool up = arpeggio->arpeggioType() != ArpeggioType::DOWN && arpeggio->arpeggioType() != ArpeggioType::DOWN_STRAIGHT;
       if (up) {
             start = 0;
             end   = notes;
@@ -1389,13 +1434,27 @@ void renderArpeggio(Chord *chord, QList<NoteEventList> & ell)
             step  = -1;
             }
       int j = 0;
+      const EaseInOut curve(qreal(arpeggio->curveAmount()) / 100.0, 0.0);
       for (int i = start; i != end; i += step) {
             NoteEventList* events = &(ell)[i];
             events->clear();
 
-            auto tempoRatio = chord->score()->tempomap()->tempo(chord->tick().ticks()) / Score::defaultTempo();
-            int ot = (l * j * 1000) / chord->upNote()->playTicks() *
-               tempoRatio * chord->arpeggio()->Stretch();
+            const qreal linearPosition = notes == 1 ? 1.0 : qreal(j) / qreal(notes - 1);
+            qreal position = linearPosition;
+            if (arpeggio->curveType() == ArpeggioCurveType::CURVED) {
+                  // Use MuseScore's existing ease-in transfer curve.  It maps
+                  // note progress to time, so early notes are farther apart
+                  // and the roll accelerates toward its anchored final note.
+                  position = curve.XfromY(linearPosition);
+                  }
+            int onsetTicks = qRound(position * spreadTicks);
+            if (arpeggio->playBeforeBeat())
+                  onsetTicks -= spreadTicks;
+            const qreal onsetPermille = (qreal(onsetTicks) * 1000.0) / chordTicks;
+            // collectNote() converts permille back to ticks with integer
+            // division, which truncates toward zero.  Round away from zero
+            // here so values such as 1/12 retain their exact musical tick.
+            const int ot = onsetTicks < 0 ? qFloor(onsetPermille) : qCeil(onsetPermille);
 
             events->append(NoteEvent(0, ot, 1000 - ot));
             j++;
@@ -2125,7 +2184,33 @@ void Score::createGraceNotesPlayEvents(const Fraction& tick, Chord* chord, int& 
       bool drumset = (getDrumset(chord) != nullptr);
       const qreal ticksPerSecond = tempo(tick) * DIVISION;
       const qreal chordTimeMS = (chord->actualTicks().ticks() / ticksPerSecond) * 1000;
-      if (drumset) {
+      const bool timedAcciaccatura = nb && gnb[0]->noteType() == NoteType::ACCIACCATURA;
+      QVector<int> acciaccaturaDurations;
+      int acciaccaturaTotal = 0;
+      if (timedAcciaccatura) {
+            const int chordTicks = qMax(1, chord->actualTicks().ticks());
+            for (Chord* graceChord : qAsConst(gnb)) {
+                  const int durationTicks = qMax(1, qRound(4.0 * DIVISION / graceChord->ornamentNoteDenominator()));
+                  // The event-map conversion truncates permille toward zero.
+                  // Ceil here so triplet values do not become one tick short.
+                  const int duration = qMax(1, qCeil((qreal(durationTicks) * 1000.0) / chordTicks));
+                  acciaccaturaDurations.append(duration);
+                  acciaccaturaTotal += duration;
+                  }
+            if (gnb[0]->playBeforeBeat()) {
+                  // The grace sequence ends at zero and the anchor chord begins
+                  // at zero: no time is borrowed from the written note.
+                  ontime = 0;
+                  }
+            else {
+                  // Retain an on-beat mode for users who deliberately disable
+                  // the new default, while guaranteeing an audible anchor.
+                  ontime = qMin(999, acciaccaturaTotal);
+                  }
+            weightb = 0.0;
+            weighta = 1.0;
+            }
+      else if (drumset) {
             int flamDuration = 15; //ms
             graceDuration = flamDuration / chordTimeMS * 1000; //ratio 1/1000 from the main note length
             ontime = graceDuration * nb;
@@ -2140,8 +2225,7 @@ void Score::createGraceNotesPlayEvents(const Fraction& tick, Chord* chord, int& 
             //  - for appoggiaturas, the duration is divided by the number of grace notes
             //  - the grace note duration as notated does not matter
             //
-            Chord* graceChord = gnb[0];
-            if (graceChord->noteType() ==  NoteType::ACCIACCATURA || nb > 1) { // treat multiple subsequent grace notes as acciaccaturas
+            if (nb > 1) { // treat multiple subsequent non-acciaccatura grace notes as short graces
                   int graceTimeMS = 65 * nb;     // value determined empirically (TODO: make instrument-specific, like articulations)
                   // 1000 occurs below as a unit for ontime
                   ontime = qMin(500, static_cast<int>((graceTimeMS / chordTimeMS) * 1000));
@@ -2158,19 +2242,21 @@ void Score::createGraceNotesPlayEvents(const Fraction& tick, Chord* chord, int& 
             graceDuration = ontime / nb;
             }
 
-      for (int i = 0, on = 0; i < nb; ++i) {
+      int graceOn = timedAcciaccatura && gnb[0]->playBeforeBeat() ? -acciaccaturaTotal : 0;
+      for (int i = 0; i < nb; ++i) {
             QList<NoteEventList> el;
             Chord* gc = gnb.at(i);
+            const int currentGraceDuration = timedAcciaccatura ? acciaccaturaDurations.at(i) : graceDuration;
             size_t nn = gc->notes().size();
             for (unsigned ii = 0; ii < nn; ++ii) {
                   NoteEventList nel;
-                  nel.append(NoteEvent(0, on, graceDuration));
+                  nel.append(NoteEvent(0, graceOn, currentGraceDuration));
                   el.append(nel);
                   }
 
             if (gc->playEventType() == PlayEventType::Auto)
                   gc->setNoteEventLists(el);
-            on += graceDuration;
+            graceOn += currentGraceDuration;
             }
       if (na) {
             if (chord->dots() == 1)

@@ -93,6 +93,7 @@ set (INSPECTOR_UI
     ${CMAKE_CURRENT_LIST_DIR}/align_select.ui
     ${CMAKE_CURRENT_LIST_DIR}/font_style_select.ui
     ${CMAKE_CURRENT_LIST_DIR}/inspector_accidental.ui
+    ${CMAKE_CURRENT_LIST_DIR}/inspector_acciaccatura_playback.ui
     ${CMAKE_CURRENT_LIST_DIR}/inspector_ambitus.ui
     ${CMAKE_CURRENT_LIST_DIR}/inspector_arpeggio.ui
     ${CMAKE_CURRENT_LIST_DIR}/inspector_articulation.ui
