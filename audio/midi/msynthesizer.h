@@ -17,6 +17,8 @@
 #include "effects/effect.h"
 #include "libmscore/synthesizerstate.h"
 
+class QWidget;
+
 namespace Ms {
 
 struct MidiPatch;
@@ -84,6 +86,9 @@ class MasterSynthesizer : public QObject {
       void process(unsigned, float*);
       void play(const NPlayEvent&, unsigned);
       void setPlaybackState(bool playing, double tempoBpm);
+      bool prepareChannel(const QString& synthesizerName, int channel, int bank, int program);
+      bool hasEditor(const QString& synthesizerName, int channel) const;
+      bool openEditor(const QString& synthesizerName, int channel, QWidget* parent);
 
       void setMasterTuning(double val);
       double masterTuning() const      { return _masterTuning; }

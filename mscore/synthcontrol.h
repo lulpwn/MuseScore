@@ -64,7 +64,7 @@ class SynthControl : public QWidget, Ui::SynthControl {
       void switchNonExprButtonClicked();
       void resetExprButtonClicked();
       void setDirty();
-      void routePatchToPianos(const QString& synthesizerName);
+      void routePatchToPianos(const QString& synthesizerName, int bank, int program);
 
    signals:
       void soundFontChanged();

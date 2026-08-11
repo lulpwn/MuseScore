@@ -56,8 +56,8 @@ SynthControl::SynthControl(QWidget* parent)
             tabWidget->insertTab(idx++, s->gui(), tr(s->name()));
             s->gui()->synthesizerChanged();
             connect(s->gui(), SIGNAL(valueChanged()), SLOT(setDirty()));
-            connect(s->gui(), SIGNAL(requestPatchRouting(QString)),
-                    SLOT(routePatchToPianos(QString)));
+            connect(s->gui(), SIGNAL(requestPatchRouting(QString,int,int)),
+                    SLOT(routePatchToPianos(QString,int,int)));
             }
 
       // effectA        combo box
@@ -231,23 +231,28 @@ void SynthControl::setScore(Score* s) {
 
       loadButton->setEnabled(true);
       saveButton->setEnabled(true);
+      for (Synthesizer* synthesizer : synti->synthesizer()) {
+            if (synthesizer->gui())
+                  synthesizer->gui()->synthesizerChanged();
+            }
       }
 
 //---------------------------------------------------------
 //   routePatchToPianos
 //---------------------------------------------------------
 
-void SynthControl::routePatchToPianos(const QString& synthesizerName)
+void SynthControl::routePatchToPianos(const QString& synthesizerName, int bank, int program)
       {
       if (!_score || synthesizerName.isEmpty())
             return;
 
-      MidiPatch* patch = synti->getPatchInfo(synthesizerName, 0, 0);
+      MidiPatch* patch = synti->getPatchInfo(synthesizerName, bank, program);
       if (!patch)
             return;
 
       MasterScore* score = _score->masterScore();
       QList<Channel*> pianoChannels;
+      Channel* firstPitchedChannel = nullptr;
       QSet<Channel*> seenChannels;
       for (Part* part : score->parts()) {
             const bool pianoPart = part->partName().contains("piano", Qt::CaseInsensitive);
@@ -260,23 +265,35 @@ void SynthControl::routePatchToPianos(const QString& synthesizerName)
                         Channel* channel = instrument->playbackChannel(channelIndex, score);
                         if (!channel || seenChannels.contains(channel))
                               continue;
+                        if (!instrument->useDrumset() && !firstPitchedChannel)
+                              firstPitchedChannel = channel;
                         const bool pianoProgram = channel->program() >= 0 && channel->program() <= 7;
                         if (!instrument->useDrumset() && (pianoInstrument || pianoProgram)) {
                               seenChannels.insert(channel);
-                              if (channel->synti() != synthesizerName)
-                                    pianoChannels.append(channel);
+                              pianoChannels.append(channel);
                               }
                         }
                   }
             }
 
-      if (pianoChannels.isEmpty()) {
+      if (pianoChannels.isEmpty() && firstPitchedChannel)
+            pianoChannels.append(firstPitchedChannel);
+
+      QList<Channel*> channelsToChange;
+      for (Channel* channel : pianoChannels) {
+            if (channel->synti() != synthesizerName || channel->bank() != bank
+                || channel->program() != program)
+                  channelsToChange.append(channel);
+            }
+
+      if (channelsToChange.isEmpty()) {
+            seq->initInstruments();
             updateMixer();
             return;
             }
 
       score->startCmd();
-      for (Channel* channel : pianoChannels) {
+      for (Channel* channel : channelsToChange) {
             score->undo(new ChangePatch(score, channel, patch));
             score->undo(new SetUserBankController(channel, true));
             }
@@ -284,6 +301,9 @@ void SynthControl::routePatchToPianos(const QString& synthesizerName)
       score->endCmd();
 
       synti->allNotesOff(-1);
+      for (Channel* channel : pianoChannels)
+            synti->prepareChannel(synthesizerName, channel->channel(), bank, program);
+      seq->initInstruments();
       updateMixer();
       }
 

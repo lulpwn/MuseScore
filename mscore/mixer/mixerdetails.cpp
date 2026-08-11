@@ -161,6 +161,10 @@ void MixerDetails::updateFromTrack()
       MidiMapping* midiMap = _mti->midiMap();
       Part* part = _mti->part();
       Channel* chan = _mti->focusedChan();
+      const bool isVst3Channel = chan->synti() == "VST3";
+
+      if (isVst3Channel)
+            synti->prepareChannel(chan->synti(), chan->channel(), chan->bank(), chan->program());
 
       //Check if drumkit
       const bool isHarmonyChannel = chan->isHarmonyChannel();
@@ -176,31 +180,36 @@ void MixerDetails::updateFromTrack()
       const auto& pl = synti->getPatchInfo();
       int patchIndex = 0;
 
-      // Order by program number instead of bank, so similar instruments
-      // appear next to each other, but ordered primarily by soundfont
-      std::map<int, std::map<int, std::vector<const MidiPatch*>>> orderedPl;
+      if (isVst3Channel) {
+            patchCombo->addItem(tr("VST3 instrument (use Synthesizer)"));
+            }
+      else {
+            // Order by program number instead of bank, so similar instruments
+            // appear next to each other, but ordered primarily by soundfont
+            std::map<int, std::map<int, std::vector<const MidiPatch*>>> orderedPl;
 
-      for (const MidiPatch* p : pl)
-            orderedPl[p->sfid][p->prog].push_back(p);
+            for (const MidiPatch* p : pl)
+                  orderedPl[p->sfid][p->prog].push_back(p);
 
-      std::vector<QString> usedNames;
-      for (auto const& sf : orderedPl) {
-            for (auto const& pn : sf.second) {
-                  for (const MidiPatch* p : pn.second) {
-                        if (p->drum == drum || p->synti != "Fluid") {
-                              QString pName = p->name;
-                              if (std::find(usedNames.begin(), usedNames.end(), p->name) != usedNames.end()) {
-                                    QString addNum = QString(" (%1)").arg(p->sfid);
-                                    pName.append(addNum);
+            std::vector<QString> usedNames;
+            for (auto const& sf : orderedPl) {
+                  for (auto const& pn : sf.second) {
+                        for (const MidiPatch* p : pn.second) {
+                              if (p->synti == "Fluid" && p->drum == drum) {
+                                    QString pName = p->name;
+                                    if (std::find(usedNames.begin(), usedNames.end(), p->name) != usedNames.end()) {
+                                          QString addNum = QString(" (%1)").arg(p->sfid);
+                                          pName.append(addNum);
+                                          }
+                                    else
+                                          usedNames.push_back(p->name);
+
+                                    patchCombo->addItem(pName, QVariant::fromValue<void*>((void*)p));
+                                    if (p->synti == chan->synti() &&
+                                        p->bank == chan->bank() &&
+                                        p->prog == chan->program())
+                                          patchIndex = patchCombo->count() - 1;
                                     }
-                              else
-                                    usedNames.push_back(p->name);
-
-                              patchCombo->addItem(pName, QVariant::fromValue<void*>((void*)p));
-                              if (p->synti == chan->synti() &&
-                                  p->bank == chan->bank() &&
-                                  p->prog == chan->program())
-                                    patchIndex = patchCombo->count() - 1;
                               }
                         }
                   }
@@ -208,7 +217,7 @@ void MixerDetails::updateFromTrack()
       patchCombo->setCurrentIndex(patchIndex);
 
       patchCombo->blockSignals(false);
-
+      patchCombo->setEnabled(!isVst3Channel);
       QString partName = part->partName();
       if (!chan->name().isEmpty())
             channelLabel->setText(qApp->translate("InstrumentsXML", chan->name().toUtf8().data()));
@@ -420,6 +429,11 @@ void MixerDetails::propertyChanged(Channel::Prop property)
                   partNameLineEdit->blockSignals(false);
                   break;
                   }
+            case Channel::Prop::PROGRAM:
+            case Channel::Prop::BANK:
+            case Channel::Prop::SYNTI:
+                  updateFromTrack();
+                  break;
             default:
                   break;
             }
@@ -500,6 +514,8 @@ void MixerDetails::patchChanged(int n)
             score->setLayoutAll();
             score->endCmd();
             }
+      synti->prepareChannel(p->synti, channel->channel(), p->bank, p->prog);
+      seq->initInstruments();
       }
 
 //---------------------------------------------------------

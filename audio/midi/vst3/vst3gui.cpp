@@ -1,371 +1,338 @@
 //=============================================================================
 //  MuseScore
-//  VST3 instrument synthesizer user interface
+//  VST3 settings page
 //=============================================================================
 
 #include "vst3gui.h"
-#include "vst3synth.h"
 
+#include <QAbstractItemView>
 #include <QApplication>
-#include <QCheckBox>
-#include <QComboBox>
-#include <QDir>
 #include <QFileDialog>
-#include <QFileInfo>
 #include <QFont>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QSettings>
-#include <QTimer>
+#include <QTreeWidget>
 #include <QVBoxLayout>
+
+#include "vst3synth.h"
 
 namespace Ms {
 
-Vst3Gui::Vst3Gui(Synthesizer* synth)
-   : SynthesizerGui(synth)
+Vst3Gui::Vst3Gui(Vst3Synth* synthesizer)
+   : SynthesizerGui(synthesizer)
       {
-      auto* layout = new QVBoxLayout(this);
-      layout->setContentsMargins(16, 14, 16, 14);
-      layout->setSpacing(12);
+      auto* rootLayout = new QVBoxLayout(this);
+      rootLayout->setContentsMargins(10, 10, 10, 10);
+      rootLayout->setSpacing(8);
 
-      auto* title = new QLabel(tr("VST3 piano instrument"), this);
+      auto* headerLayout = new QHBoxLayout;
+      auto* titleLayout = new QVBoxLayout;
+      auto* title = new QLabel(tr("VST3 Instruments"), this);
       QFont titleFont = title->font();
-      titleFont.setBold(true);
       titleFont.setPointSize(titleFont.pointSize() + 2);
+      titleFont.setBold(true);
       title->setFont(titleFont);
-      layout->addWidget(title);
-
-      auto* explanation = new QLabel(tr(
-         "Choose an installed instrument. MuseScore remembers this list and can route piano parts to it automatically."), this);
+      auto* explanation = new QLabel(
+         tr("Choose an instrument for the current score, then open its native editor from here."), this);
       explanation->setWordWrap(true);
-      layout->addWidget(explanation);
-
-      auto* instrumentGroup = new QGroupBox(tr("Instrument"), this);
-      auto* instrumentLayout = new QVBoxLayout(instrumentGroup);
-      instrumentLayout->setSpacing(8);
-
-      auto* pluginLabel = new QLabel(tr("Available plug-ins"), instrumentGroup);
-      instrumentLayout->addWidget(pluginLabel);
-
-      auto* pluginRow = new QHBoxLayout;
-      _plugins = new QComboBox(instrumentGroup);
-      _plugins->setEditable(false);
-      _plugins->setInsertPolicy(QComboBox::NoInsert);
-      _plugins->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
-      _plugins->setMinimumContentsLength(28);
-      pluginRow->addWidget(_plugins, 1);
-
-      auto* browseButton = new QPushButton(tr("Add plug-in..."), instrumentGroup);
-      _scanButton = new QPushButton(tr("Rescan"), instrumentGroup);
-      pluginRow->addWidget(browseButton);
-      pluginRow->addWidget(_scanButton);
-      instrumentLayout->addLayout(pluginRow);
-
-      _pluginPath = new QLabel(instrumentGroup);
-      _pluginPath->setWordWrap(true);
-      _pluginPath->setTextInteractionFlags(Qt::TextSelectableByMouse);
-      _pluginPath->setStyleSheet("color: palette(mid);");
-      instrumentLayout->addWidget(_pluginPath);
-
-      _routeToPiano = new QCheckBox(tr("Use this instrument for piano playback"), instrumentGroup);
-      _routeToPiano->setChecked(true);
-      _routeToPiano->setToolTip(tr(
-         "When loading the instrument, switch piano channels from FluidSynth to the VST3 patch."));
-      instrumentLayout->addWidget(_routeToPiano);
-      layout->addWidget(instrumentGroup);
-
-      auto* performanceGroup = new QGroupBox(tr("Playback performance"), this);
-      auto* performanceLayout = new QVBoxLayout(performanceGroup);
-      auto* bufferRow = new QHBoxLayout;
-      auto* bufferLabel = new QLabel(tr("Audio buffer"), performanceGroup);
-      _audioBuffer = new QComboBox(performanceGroup);
-      _audioBuffer->addItem(tr("Automatic (lowest latency)"), 0);
-      _audioBuffer->addItem(tr("256 samples"), 256);
-      _audioBuffer->addItem(tr("512 samples (recommended)"), 512);
-      _audioBuffer->addItem(tr("1024 samples (maximum stability)"), 1024);
-      bufferRow->addWidget(bufferLabel);
-      bufferRow->addWidget(_audioBuffer, 1);
-      performanceLayout->addLayout(bufferRow);
-      auto* bufferHelp = new QLabel(tr(
-         "A larger buffer reduces missed notes and stuttering, at the cost of more playback latency. "
-         "Restart MuseScore after changing it."), performanceGroup);
-      bufferHelp->setWordWrap(true);
-      bufferHelp->setStyleSheet("color: palette(mid);");
-      performanceLayout->addWidget(bufferHelp);
-      layout->addWidget(performanceGroup);
-
-      auto* buttonRow = new QHBoxLayout;
-      _loadButton = new QPushButton(tr("Load selected"), this);
-      _loadButton->setDefault(true);
-      _editorButton = new QPushButton(tr("Open editor"), this);
-      _unloadButton = new QPushButton(tr("Unload"), this);
-      buttonRow->addWidget(_loadButton);
-      buttonRow->addWidget(_editorButton);
-      buttonRow->addWidget(_unloadButton);
-      buttonRow->addStretch(1);
-      layout->addLayout(buttonRow);
+      titleLayout->addWidget(title);
+      titleLayout->addWidget(explanation);
+      headerLayout->addLayout(titleLayout, 1);
 
       _status = new QLabel(this);
-      _message = new QLabel(this);
-      _message->setWordWrap(true);
-      _message->setStyleSheet("color: #b00020;");
-      layout->addWidget(_status);
-      layout->addWidget(_message);
-      layout->addStretch(1);
+      _status->setWordWrap(true);
+      _status->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+      _status->setMinimumWidth(190);
+      _status->setStyleSheet(QStringLiteral(
+         "QLabel { padding: 6px 10px; border: 1px solid palette(mid); border-radius: 3px; }"));
+      headerLayout->addWidget(_status);
+      rootLayout->addLayout(headerLayout);
 
-      connect(_scanButton, SIGNAL(clicked()), SLOT(refreshPlugins()));
-      connect(browseButton, SIGNAL(clicked()), SLOT(browsePlugin()));
-      connect(_loadButton, SIGNAL(clicked()), SLOT(loadSelectedPlugin()));
-      connect(_editorButton, SIGNAL(clicked()), SLOT(openEditor()));
-      connect(_unloadButton, SIGNAL(clicked()), SLOT(unloadPlugin()));
+      auto* pluginsGroup = new QGroupBox(tr("Available VST3 instruments"), this);
+      auto* pluginsLayout = new QVBoxLayout(pluginsGroup);
+      auto* filterLayout = new QHBoxLayout;
+      auto* filterLabel = new QLabel(tr("Search:"), pluginsGroup);
+      _filter = new QLineEdit(pluginsGroup);
+      _filter->setClearButtonEnabled(true);
+      _filter->setPlaceholderText(tr("Filter by instrument, vendor, or path"));
+      filterLayout->addWidget(filterLabel);
+      filterLayout->addWidget(_filter, 1);
+      pluginsLayout->addLayout(filterLayout);
 
-      _serviceTimer = new QTimer(this);
-      _serviceTimer->setInterval(30);
-      connect(_serviceTimer, SIGNAL(timeout()), SLOT(servicePlugin()));
-      _serviceTimer->start();
+      _plugins = new QTreeWidget(pluginsGroup);
+      _plugins->setColumnCount(4);
+      _plugins->setHeaderLabels(QStringList() << tr("Instrument") << tr("Vendor")
+                                               << tr("Status") << tr("Location"));
+      _plugins->setRootIsDecorated(false);
+      _plugins->setAlternatingRowColors(true);
+      _plugins->setSelectionMode(QAbstractItemView::SingleSelection);
+      _plugins->setUniformRowHeights(true);
+      _plugins->setSortingEnabled(true);
+      _plugins->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+      _plugins->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+      _plugins->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+      _plugins->header()->setSectionResizeMode(3, QHeaderView::Stretch);
+      pluginsLayout->addWidget(_plugins);
 
-      loadCachedPlugins();
-      connect(_plugins, SIGNAL(currentIndexChanged(int)), SLOT(selectedPluginChanged(int)));
-      connect(_routeToPiano, SIGNAL(toggled(bool)), SLOT(routeOptionChanged(bool)));
-      connect(_audioBuffer, SIGNAL(currentIndexChanged(int)), SLOT(audioBufferChanged(int)));
-      updateControls();
-      if (_plugins->count() == 0)
-            refreshPlugins();
+      auto* pluginButtonLayout = new QHBoxLayout;
+      _loadPlugin = new QPushButton(tr("Load selected"), pluginsGroup);
+      _openEditor = new QPushButton(tr("Open editor..."), pluginsGroup);
+      _useFluidSynth = new QPushButton(tr("Use FluidSynth"), pluginsGroup);
+      auto* rescanButton = new QPushButton(tr("Rescan"), pluginsGroup);
+      pluginButtonLayout->addWidget(_loadPlugin);
+      pluginButtonLayout->addWidget(_openEditor);
+      pluginButtonLayout->addWidget(_useFluidSynth);
+      pluginButtonLayout->addStretch();
+      pluginButtonLayout->addWidget(rescanButton);
+      pluginsLayout->addLayout(pluginButtonLayout);
+      rootLayout->addWidget(pluginsGroup, 1);
+
+      auto* directoriesGroup = new QGroupBox(tr("Additional VST3 folders"), this);
+      auto* directoriesLayout = new QVBoxLayout(directoriesGroup);
+      _directories = new QListWidget(directoriesGroup);
+      _directories->setMaximumHeight(95);
+      directoriesLayout->addWidget(_directories);
+
+      auto* directoryButtonLayout = new QHBoxLayout;
+      auto* addButton = new QPushButton(tr("Add folder..."), directoriesGroup);
+      _removeDirectory = new QPushButton(tr("Remove folder"), directoriesGroup);
+      directoryButtonLayout->addWidget(addButton);
+      directoryButtonLayout->addWidget(_removeDirectory);
+      directoryButtonLayout->addStretch();
+      directoriesLayout->addLayout(directoryButtonLayout);
+      rootLayout->addWidget(directoriesGroup);
+
+      connect(addButton, SIGNAL(clicked()), SLOT(addDirectory()));
+      connect(_removeDirectory, SIGNAL(clicked()), SLOT(removeDirectory()));
+      connect(rescanButton, SIGNAL(clicked()), SLOT(rescan()));
+      connect(_directories, SIGNAL(itemSelectionChanged()), SLOT(updateButtons()));
+      connect(_plugins, SIGNAL(itemSelectionChanged()), SLOT(updateButtons()));
+      connect(_plugins, SIGNAL(itemDoubleClicked(QTreeWidgetItem*,int)), SLOT(loadSelected()));
+      connect(_filter, SIGNAL(textChanged(QString)), SLOT(updateFilter(QString)));
+      connect(_loadPlugin, SIGNAL(clicked()), SLOT(loadSelected()));
+      connect(_openEditor, SIGNAL(clicked()), SLOT(openSelectedEditor()));
+      connect(_useFluidSynth, SIGNAL(clicked()), SLOT(useFluidSynth()));
+
+      refresh();
       }
 
-Vst3Synth* Vst3Gui::vst3()
+Vst3Synth* Vst3Gui::vstSynth()
       {
       return static_cast<Vst3Synth*>(synthesizer());
       }
 
-QString Vst3Gui::selectedPath() const
+void Vst3Gui::refresh()
       {
-      const int index = _plugins->currentIndex();
-      return index >= 0 ? QDir::toNativeSeparators(_plugins->itemData(index).toString()) : QString();
+      int selectedBank = -1;
+      int selectedProgram = -1;
+      selectedPatch(selectedBank, selectedProgram);
+
+      _plugins->clear();
+      const QList<Vst3PluginDescriptor> descriptors = vstSynth()->descriptors();
+      QTreeWidgetItem* itemToSelect = nullptr;
+      for (const Vst3PluginDescriptor& descriptor : descriptors) {
+            auto* item = new QTreeWidgetItem(_plugins);
+            item->setText(0, descriptor.name);
+            item->setText(1, descriptor.vendor);
+            item->setText(2, vstSynth()->activeChannel(descriptor.bank, descriptor.program) >= 0
+                              ? tr("Loaded") : QString());
+            item->setText(3, descriptor.path);
+            item->setToolTip(3, descriptor.path);
+            item->setData(0, Qt::UserRole, descriptor.bank);
+            item->setData(0, Qt::UserRole + 1, descriptor.program);
+            if (item->text(2) == tr("Loaded")) {
+                  QFont font = item->font(0);
+                  font.setBold(true);
+                  item->setFont(0, font);
+                  item->setFont(2, font);
+                  }
+            if (descriptor.bank == selectedBank && descriptor.program == selectedProgram)
+                  itemToSelect = item;
+            }
+
+      if (!itemToSelect && _plugins->topLevelItemCount() > 0)
+            itemToSelect = _plugins->topLevelItem(0);
+      if (itemToSelect)
+            _plugins->setCurrentItem(itemToSelect);
+      updateFilter(_filter ? _filter->text() : QString());
+
+      _directories->clear();
+      _directories->addItems(vstSynth()->customDirectories());
+
+      const QStringList errors = vstSynth()->scanErrors();
+      if (descriptors.isEmpty())
+            _status->setText(tr("No VST3 instruments were found."));
+      else if (errors.isEmpty())
+            _status->setText(tr("%n VST3 instrument(s) available.", nullptr, descriptors.size()));
+      else
+            _status->setText(tr("%1 instrument(s) available; %2 plug-in(s) could not be scanned.")
+                             .arg(descriptors.size()).arg(errors.size()));
+      _status->setToolTip(errors.join(QLatin1Char('\n')));
+      updateButtons();
       }
 
-void Vst3Gui::addPluginPath(const QString& path, bool select)
+void Vst3Gui::selectFirstVisiblePlugin()
       {
-      if (path.isEmpty())
+      QTreeWidgetItem* current = _plugins->currentItem();
+      if (current && !current->isHidden())
             return;
-      const QString nativePath = QDir::toNativeSeparators(path);
-      for (int i = 0; i < _plugins->count(); ++i) {
-            if (QDir::cleanPath(_plugins->itemData(i).toString()).compare(
-                   QDir::cleanPath(nativePath), Qt::CaseInsensitive) == 0) {
-                  if (select)
-                        _plugins->setCurrentIndex(i);
+
+      for (int row = 0; row < _plugins->topLevelItemCount(); ++row) {
+            QTreeWidgetItem* item = _plugins->topLevelItem(row);
+            if (!item->isHidden()) {
+                  _plugins->setCurrentItem(item);
                   return;
                   }
             }
-      const QString label = QFileInfo(nativePath).completeBaseName();
-      _plugins->addItem(label.isEmpty() ? nativePath : label, nativePath);
-      _plugins->setItemData(_plugins->count() - 1, nativePath, Qt::ToolTipRole);
-      if (select)
-            _plugins->setCurrentIndex(_plugins->count() - 1);
+      _plugins->setCurrentItem(nullptr);
       }
 
-void Vst3Gui::loadCachedPlugins()
+bool Vst3Gui::selectedPatch(int& bank, int& program) const
       {
-      QSettings settings;
-      settings.beginGroup("VST3Host");
-      const bool currentCatalog = settings.value("instrumentCatalogVersion", 0).toInt() == 1;
-      const QStringList paths = currentCatalog ? settings.value("pluginPaths").toStringList() : QStringList();
-      const QString lastPath = currentCatalog ? settings.value("lastPluginPath").toString() : QString();
-      _routeToPiano->setChecked(settings.value("routePiano", true).toBool());
-      const int bufferFrames = settings.value("audioBufferFrames", 512).toInt();
-      settings.endGroup();
+      QTreeWidgetItem* item = _plugins->currentItem();
+      if (!item)
+            return false;
+      bank = item->data(0, Qt::UserRole).toInt();
+      program = item->data(0, Qt::UserRole + 1).toInt();
+      return true;
+      }
 
-      int bufferIndex = _audioBuffer->findData(bufferFrames);
-      if (bufferIndex < 0)
-            bufferIndex = _audioBuffer->findData(512);
-      _audioBuffer->setCurrentIndex(bufferIndex);
-
-      for (const QString& path : paths) {
-            if (QFileInfo::exists(path))
-                  addPluginPath(path, false);
+void Vst3Gui::updateFilter(const QString& text)
+      {
+      const QString needle = text.trimmed();
+      for (int row = 0; row < _plugins->topLevelItemCount(); ++row) {
+            QTreeWidgetItem* item = _plugins->topLevelItem(row);
+            QStringList fields;
+            fields << item->text(0) << item->text(1) << item->text(2) << item->text(3);
+            item->setHidden(!needle.isEmpty()
+                            && !fields.join(QLatin1Char(' ')).contains(needle, Qt::CaseInsensitive));
             }
-      if (!lastPath.isEmpty() && QFileInfo::exists(lastPath))
-            addPluginPath(lastPath, true);
-      if (_plugins->currentIndex() < 0 && _plugins->count() > 0)
-            _plugins->setCurrentIndex(0);
-      updateSelectionDetails();
+      selectFirstVisiblePlugin();
+      updateButtons();
       }
 
-void Vst3Gui::saveCachedPlugins() const
+int Vst3Gui::loadSelectedPatch(bool showFailure)
       {
-      QStringList paths;
-      for (int i = 0; i < _plugins->count(); ++i) {
-            const QString path = _plugins->itemData(i).toString();
-            if (!path.isEmpty())
-                  paths.append(path);
+      int bank = 0;
+      int program = 0;
+      if (!selectedPatch(bank, program))
+            return -1;
+
+      emit requestPatchRouting(QStringLiteral("VST3"), bank, program);
+      const int channel = vstSynth()->activeChannel(bank, program);
+      if (channel < 0 && showFailure) {
+            QMessageBox::warning(this, tr("Load VST3 instrument"),
+               tr("The instrument could not be assigned. Open a score containing a pitched instrument and try again."));
             }
-
-      QSettings settings;
-      settings.beginGroup("VST3Host");
-      settings.setValue("instrumentCatalogVersion", 1);
-      settings.setValue("pluginPaths", paths);
-      settings.setValue("lastPluginPath", selectedPath());
-      settings.setValue("routePiano", _routeToPiano->isChecked());
-      settings.setValue("audioBufferFrames", _audioBuffer->currentData().toInt());
-      settings.endGroup();
+      refresh();
+      return channel;
       }
 
-void Vst3Gui::updateSelectionDetails()
+void Vst3Gui::loadSelected()
       {
-      const QString path = selectedPath();
-      _pluginPath->setText(path.isEmpty() ? tr("No plug-in selected") : tr("Location: %1").arg(path));
-      _loadButton->setEnabled(!path.isEmpty());
+      if (loadSelectedPatch(true) >= 0)
+            emit valueChanged();
       }
 
-void Vst3Gui::refreshPlugins()
+void Vst3Gui::openSelectedEditor()
       {
-      const QString previous = selectedPath();
-      _scanButton->setEnabled(false);
-      _scanButton->setText(tr("Scanning..."));
+      int bank = 0;
+      int program = 0;
+      if (!selectedPatch(bank, program))
+            return;
+
+      int channel = vstSynth()->activeChannel(bank, program);
+      if (channel < 0) {
+            channel = loadSelectedPatch(true);
+            if (channel >= 0)
+                  emit valueChanged();
+            }
+      if (channel < 0)
+            return;
+
+      if (!vstSynth()->hasEditor(channel) || !vstSynth()->openEditor(channel, this)) {
+            QMessageBox::warning(this, tr("VST3 editor"),
+                                 tr("This VST3 instrument did not provide a compatible native editor."));
+            }
+      updateButtons();
+      }
+
+void Vst3Gui::useFluidSynth()
+      {
+      emit requestPatchRouting(QStringLiteral("Fluid"), 0, 0);
+      refresh();
+      emit valueChanged();
+      }
+
+void Vst3Gui::rescan()
+      {
       QApplication::setOverrideCursor(Qt::WaitCursor);
-      const QStringList paths = vst3()->availablePlugins();
+      vstSynth()->rescanPlugins();
       QApplication::restoreOverrideCursor();
-      _scanButton->setText(tr("Rescan"));
-      _scanButton->setEnabled(true);
+      refresh();
+      emit sfChanged();
+      emit valueChanged();
+      }
 
-      _plugins->clear();
-      for (const QString& path : paths)
-            addPluginPath(path, false);
-      for (int i = 0; i < _plugins->count(); ++i) {
-            if (QDir::cleanPath(_plugins->itemData(i).toString()).compare(
-                   QDir::cleanPath(previous), Qt::CaseInsensitive) == 0) {
-                  _plugins->setCurrentIndex(i);
+void Vst3Gui::addDirectory()
+      {
+      const QString directory = QFileDialog::getExistingDirectory(this, tr("Select VST3 folder"));
+      if (directory.isEmpty())
+            return;
+      QApplication::setOverrideCursor(Qt::WaitCursor);
+      const bool added = vstSynth()->addCustomDirectory(directory);
+      QApplication::restoreOverrideCursor();
+      if (!added)
+            return;
+      refresh();
+      emit sfChanged();
+      emit valueChanged();
+      }
+
+void Vst3Gui::removeDirectory()
+      {
+      QListWidgetItem* item = _directories->currentItem();
+      if (!item)
+            return;
+      QApplication::setOverrideCursor(Qt::WaitCursor);
+      const bool removed = vstSynth()->removeCustomDirectory(item->text());
+      QApplication::restoreOverrideCursor();
+      if (!removed)
+            return;
+      refresh();
+      emit sfChanged();
+      emit valueChanged();
+      }
+
+void Vst3Gui::updateButtons()
+      {
+      _removeDirectory->setEnabled(_directories->currentItem() != nullptr);
+      int bank = 0;
+      int program = 0;
+      const bool hasSelection = selectedPatch(bank, program);
+      const int channel = hasSelection ? vstSynth()->activeChannel(bank, program) : -1;
+      _loadPlugin->setEnabled(hasSelection);
+      _openEditor->setEnabled(hasSelection && (channel < 0 || vstSynth()->hasEditor(channel)));
+
+      bool hasLoadedPlugin = false;
+      for (int row = 0; row < _plugins->topLevelItemCount(); ++row) {
+            if (!_plugins->topLevelItem(row)->text(2).isEmpty()) {
+                  hasLoadedPlugin = true;
                   break;
                   }
             }
-
-      if (_plugins->currentIndex() < 0 && _plugins->count() > 0)
-            _plugins->setCurrentIndex(0);
-      updateSelectionDetails();
-      saveCachedPlugins();
-
-      if (_plugins->count() == 0)
-            _message->setText(tr("No VST3 plug-ins were found in the standard Windows VST3 folders."));
-      else
-            _message->clear();
-      }
-
-void Vst3Gui::browsePlugin()
-      {
-      QString start = selectedPath();
-      if (start.isEmpty())
-            start = QStringLiteral("C:/Program Files/Common Files/VST3");
-      else if (QFileInfo(start).isDir())
-            start = QFileInfo(start).absolutePath();
-      const QString path = QFileDialog::getExistingDirectory(
-         this, tr("Choose a .vst3 instrument bundle"), start, QFileDialog::ShowDirsOnly);
-      if (!path.isEmpty()) {
-            QApplication::setOverrideCursor(Qt::WaitCursor);
-            const bool instrument = vst3()->isInstrumentPlugin(path);
-            QApplication::restoreOverrideCursor();
-            if (!instrument) {
-                  QMessageBox::warning(this, tr("MuseScore"),
-                                       tr("That VST3 bundle does not contain an instrument."));
-                  return;
-                  }
-            addPluginPath(path, true);
-            updateSelectionDetails();
-            saveCachedPlugins();
-            }
-      }
-
-void Vst3Gui::loadSelectedPlugin()
-      {
-      const QString path = selectedPath();
-      if (path.isEmpty()) {
-            QMessageBox::information(this, tr("MuseScore"), tr("Choose a VST3 instrument first."));
-            return;
-            }
-
-      QApplication::setOverrideCursor(Qt::WaitCursor);
-      const bool loaded = vst3()->loadPlugin(path);
-      QApplication::restoreOverrideCursor();
-      updateControls();
-
-      if (!loaded) {
-            QMessageBox::warning(this, tr("MuseScore"),
-                                 tr("The VST3 instrument could not be loaded.\n\n%1").arg(vst3()->lastError()));
-            return;
-            }
-
-      emit valueChanged();
-      emit sfChanged();
-      saveCachedPlugins();
-      if (_routeToPiano->isChecked())
-            emit requestPatchRouting(QStringLiteral("VST3"));
-      }
-
-void Vst3Gui::openEditor()
-      {
-      if (!vst3()->showEditor(this))
-            QMessageBox::warning(this, tr("MuseScore"),
-                                 tr("The plug-in does not provide an editor.\n\n%1").arg(vst3()->lastError()));
-      }
-
-void Vst3Gui::unloadPlugin()
-      {
-      vst3()->unloadPlugin();
-      updateControls();
-      emit valueChanged();
-      emit sfChanged();
-      if (_routeToPiano->isChecked())
-            emit requestPatchRouting(QStringLiteral("Fluid"));
+      _useFluidSynth->setEnabled(hasLoadedPlugin);
       }
 
 void Vst3Gui::synthesizerChanged()
       {
-      if (vst3()->isLoaded()) {
-            addPluginPath(vst3()->pluginPath(), true);
-            saveCachedPlugins();
-            }
-      updateSelectionDetails();
-      updateControls();
-      }
-
-void Vst3Gui::selectedPluginChanged(int)
-      {
-      updateSelectionDetails();
-      saveCachedPlugins();
-      }
-
-void Vst3Gui::routeOptionChanged(bool enabled)
-      {
-      saveCachedPlugins();
-      if (enabled && vst3()->isLoaded())
-            emit requestPatchRouting(QStringLiteral("VST3"));
-      }
-
-void Vst3Gui::audioBufferChanged(int)
-      {
-      saveCachedPlugins();
-      }
-
-void Vst3Gui::servicePlugin()
-      {
-      vst3()->servicePlugin();
-      }
-
-void Vst3Gui::updateControls()
-      {
-      const bool loaded = vst3()->isLoaded();
-      _editorButton->setEnabled(loaded);
-      _unloadButton->setEnabled(loaded);
-      _loadButton->setEnabled(!selectedPath().isEmpty());
-      _status->setText(loaded
-         ? tr("Loaded and ready: %1").arg(vst3()->pluginName())
-         : tr("No instrument loaded"));
-      _status->setStyleSheet(loaded
-         ? QStringLiteral("color: #2e7d32; font-weight: bold;")
-         : QStringLiteral("color: palette(mid);") );
-      _message->setText(vst3()->lastError());
+      refresh();
       }
 
 } // namespace Ms

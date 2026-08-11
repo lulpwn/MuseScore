@@ -118,6 +118,7 @@ if (WIN32)
 else()
       option(VST3_HOST "Enable VST3 instrument playback"   OFF)
 endif()
+set(VST3_SDK_PATH "" CACHE PATH "Optional path to a VST3 SDK 3.7.7 checkout")
 option(USE_ZITA_REVERB "Enable Zita Reverb audio effect"    ON)
 option(OSC           "Enable OSC remote control protocol" ON)
 option(AVSOMR        "Enable AVSOMR import"               OFF) # AVSOMR - optical music recognition by audirevis

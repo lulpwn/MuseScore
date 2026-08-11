@@ -110,6 +110,48 @@ void MasterSynthesizer::setPlaybackState(bool playing, double tempoBpm)
       }
 
 //---------------------------------------------------------
+//   prepareChannel
+//---------------------------------------------------------
+
+bool MasterSynthesizer::prepareChannel(const QString& synthesizerName, int channel, int bank, int program)
+      {
+      bool result = false;
+      for (Synthesizer* s : _synthesizer) {
+            if (synthesizerName == s->name())
+                  result = s->prepareChannel(channel, bank, program);
+            else
+                  s->releaseChannel(channel);
+            }
+      return result;
+      }
+
+//---------------------------------------------------------
+//   hasEditor
+//---------------------------------------------------------
+
+bool MasterSynthesizer::hasEditor(const QString& synthesizerName, int channel) const
+      {
+      for (Synthesizer* s : _synthesizer) {
+            if (synthesizerName == s->name())
+                  return s->hasEditor(channel);
+            }
+      return false;
+      }
+
+//---------------------------------------------------------
+//   openEditor
+//---------------------------------------------------------
+
+bool MasterSynthesizer::openEditor(const QString& synthesizerName, int channel, QWidget* parent)
+      {
+      for (Synthesizer* s : _synthesizer) {
+            if (synthesizerName == s->name())
+                  return s->openEditor(channel, parent);
+            }
+      return false;
+      }
+
+//---------------------------------------------------------
 //   synthNameToIndex
 //---------------------------------------------------------
 

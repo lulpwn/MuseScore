@@ -24,7 +24,7 @@ class Score;
 
 enum class BeatType : char;
 
-// 4 is the default for the majority of synthesisers, aka VSTis
+// 4 is the default for the majority of synthesisers
 const int PITCH_BEND_SENSITIVITY = 4;
 
 const int MIDI_ON_SIGNAL = 127;

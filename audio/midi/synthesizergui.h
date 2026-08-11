@@ -28,7 +28,7 @@ class SynthesizerGui : public QWidget {
    signals:
       void sfChanged();
       void valueChanged();
-      void requestPatchRouting(const QString& synthesizerName);
+      void requestPatchRouting(const QString& synthesizerName, int bank, int program);
 
    public slots:
       virtual void synthesizerChanged() {}

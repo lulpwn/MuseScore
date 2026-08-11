@@ -207,6 +207,7 @@ class Seq : public QObject, public Sequencer {
       void unmarkNotes();
       void updateSynthesizerState(int tick1, int tick2);
       void chaseSustainPedals(int utick);
+      void prepareInstruments();
       bool isPreBeatOrnamentEvent(const NPlayEvent& event, int anchorScoreTick) const;
       int preBeatOrnamentSpanTicks(int anchorScoreTick) const;
       void addCountInClicks();

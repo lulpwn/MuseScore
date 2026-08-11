@@ -93,15 +93,15 @@ static SynthesizerState defaultState = {
             { 0, "MuseScore_General.sf3" },
             },
             },
-//      { "Zerberus", {
-//            { 0, "SalamanderGrandPiano.sfz" },
-//            },
-//            },
 #ifdef VST3_HOST
       { "VST3", {
             },
             },
 #endif
+//      { "Zerberus", {
+//            { 0, "SalamanderGrandPiano.sfz" },
+//            },
+//            },
       };
 
 }     // namespace Ms

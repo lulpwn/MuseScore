@@ -17,6 +17,8 @@
 
 #include <atomic>
 
+class QWidget;
+
 namespace Ms {
 
 struct MidiPatch;
@@ -67,6 +69,13 @@ class Synthesizer {
       virtual void process(unsigned, float*, float*, float*) = 0;
       virtual void play(const PlayEvent&) = 0;
       virtual void setPlaybackState(bool, double) {}
+
+      // Hosts which need a main-thread construction step (notably VST3)
+      // can prepare and release their per-score playback channels here.
+      virtual bool prepareChannel(int, int, int) { return true; }
+      virtual void releaseChannel(int) {}
+      virtual bool hasEditor(int) const { return false; }
+      virtual bool openEditor(int, QWidget*) { return false; }
 
       virtual const QList<MidiPatch*>& getPatchInfo() const = 0;
 

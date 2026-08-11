@@ -47,7 +47,6 @@ class MixerDetails : public QWidget, public Ui::MixerDetails, public ChannelList
       QList<QPushButton*> voiceButtons;
 
       void updateFromTrack();
-
 public slots:
       void partNameChanged();
       void trackColorChanged(QColor);

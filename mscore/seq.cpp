@@ -354,6 +354,7 @@ void Seq::start()
       mscore->moveControlCursor();
 
       allowBackgroundRendering = true;
+      prepareInstruments();
       collectEvents(getPlayStartUtick());
       if (cs->playMode() == PlayMode::AUDIO) {
             if (!oggInit) {
@@ -827,9 +828,7 @@ void Seq::process(unsigned framesPerPeriod, float* buffer)
                   }
             }
 
-      // Keep hosted instruments informed about the real transport state.  VST3
-      // plug-ins use this for tempo-synchronised envelopes, delays and internal
-      // sequencing; the previous host always reported 120 BPM and "playing".
+      // Keep hosted instruments informed about the real transport state.
       double tempoBpm = 120.0;
       if (cs) {
             const double scoreTempo = curTempo();
@@ -1061,8 +1060,28 @@ void Seq::process(unsigned framesPerPeriod, float* buffer)
 //   initInstruments
 //---------------------------------------------------------
 
+void Seq::prepareInstruments()
+      {
+      if (!cs || !_synti)
+            return;
+      for (const MidiMapping& mm : cs->midiMapping()) {
+            const Channel* channel = mm.articulation();
+            _synti->prepareChannel(channel->synti(), channel->channel(),
+                                   channel->bank(), channel->program());
+            }
+      }
+
+//---------------------------------------------------------
+//   initInstruments
+//---------------------------------------------------------
+
 void Seq::initInstruments(bool realTime)
       {
+      if (!cs)
+            return;
+      if (!realTime)
+            prepareInstruments();
+
       // Add midi out ports if necessary
       if (cs && (cachedPrefs.useJackMidi || cachedPrefs.useAlsaAudio)) {
             // Increase the maximum number of midi ports if user adds staves/instruments
@@ -1428,7 +1447,7 @@ void Seq::stopNotes(int channel, bool realTime)
             else
                   sendEvent(event);
             };
-      // For VSTs/devices that do not support All Notes Off
+      // For devices that do not support All Notes Off
       // CTRL_ALL_NOTES_OFF should still be evoked after calling this function, even if it seems redundant
       auto turnAllNotesOff = [send](int channel) {
             for (unsigned note = 0; note < 128; note++)

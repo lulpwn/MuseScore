@@ -169,7 +169,7 @@ extern Ms::Synthesizer* createZerberus();
 #endif
 
 #ifdef VST3_HOST
-extern Ms::Synthesizer* createVst3Synth();
+namespace Ms { Synthesizer* createVst3Synth(); }
 #endif
 
 #ifdef QT_NO_DEBUG

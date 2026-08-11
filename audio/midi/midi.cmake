@@ -58,10 +58,17 @@ set (VST3_SRC )
 if (VST3_HOST)
     set (VST3_DIR ${CMAKE_CURRENT_LIST_DIR}/vst3)
     set (VST3_SRC
-        ${VST3_DIR}/vst3synth.cpp
-        ${VST3_DIR}/vst3synth.h
+        ${VST3_DIR}/vst3componenthandler.cpp
+        ${VST3_DIR}/vst3componenthandler.h
+        ${VST3_DIR}/vst3editor.cpp
+        ${VST3_DIR}/vst3editor.h
         ${VST3_DIR}/vst3gui.cpp
         ${VST3_DIR}/vst3gui.h
+        ${VST3_DIR}/vst3plugin.cpp
+        ${VST3_DIR}/vst3plugin.h
+        ${VST3_DIR}/vst3synth.cpp
+        ${VST3_DIR}/vst3synth.h
+        ${VST3_DIR}/vst3types.h
         )
 endif (VST3_HOST)
 

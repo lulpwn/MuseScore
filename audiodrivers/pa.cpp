@@ -134,16 +134,8 @@ bool Portaudio::init(bool)
       out.device           = idx;
       out.channelCount     = 2;
       out.sampleFormat     = paFloat32;
-      QSettings settings;
-      settings.beginGroup(QStringLiteral("VST3Host"));
-      const unsigned long requestedFrames = settings.value(QStringLiteral("audioBufferFrames"), 512).toULongLong();
-      settings.endGroup();
-      _bufferFrames = (requestedFrames == 0 || requestedFrames == 256 ||
-                       requestedFrames == 512 || requestedFrames == 1024)
-                    ? requestedFrames : 512;
-      const double bufferLatency = _bufferFrames > 0
-                                 ? static_cast<double>(_bufferFrames) / _sampleRate : 0.0;
-      out.suggestedLatency = std::max(di->defaultLowOutputLatency, bufferLatency);
+      _bufferFrames        = 0;
+      out.suggestedLatency = di->defaultLowOutputLatency;
       out.hostApiSpecificStreamInfo = 0;
 
       outputUnderflows.store(0, std::memory_order_relaxed);

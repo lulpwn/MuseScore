@@ -13,22 +13,7 @@
 set(MODULE audio)
 
 if (VST3_HOST)
-      include(FetchContent)
-
-      # VST3 SDK 3.8 is MIT-licensed. Pin the exact SDK revision so this host
-      # remains reproducible even when Steinberg's master branch changes.
-      set(SMTG_ENABLE_VST3_PLUGIN_EXAMPLES OFF CACHE BOOL "" FORCE)
-      set(SMTG_ENABLE_VST3_HOSTING_EXAMPLES OFF CACHE BOOL "" FORCE)
-      set(SMTG_ENABLE_VSTGUI_SUPPORT OFF CACHE BOOL "" FORCE)
-      set(SMTG_ENABLE_VST3_MIGRATION OFF CACHE BOOL "" FORCE)
-      FetchContent_Declare(vst3sdk
-            GIT_REPOSITORY https://github.com/steinbergmedia/vst3sdk.git
-            GIT_TAG 58f8da7936800732561402d7936584ca4505de07
-            GIT_SHALLOW TRUE
-            GIT_SUBMODULES base cmake pluginterfaces public.sdk
-            GIT_SUBMODULES_RECURSE FALSE
-            )
-      FetchContent_MakeAvailable(vst3sdk)
+      include(${CMAKE_CURRENT_LIST_DIR}/midi/vst3/vst3sdk.cmake)
 endif()
 
 include (${CMAKE_CURRENT_LIST_DIR}/midi/midi.cmake)
@@ -67,21 +52,7 @@ target_link_libraries (${MODULE}
       )
 
 if (VST3_HOST)
-      target_sources(${MODULE} PRIVATE
-            ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/module_win32.cpp
-            ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
-            ${vst3sdk_SOURCE_DIR}/public.sdk/source/vst/hosting/plugprovider.h
-            )
-      target_include_directories(${MODULE} PRIVATE ${vst3sdk_SOURCE_DIR})
-
-      # sdk_hosting publishes its own C++ standard as a usage requirement.
-      # Keep that from overriding the standard used to create MuseScore's
-      # shared PCH; only the SDK's link interface is needed by this target.
-      target_link_libraries(${MODULE} $<LINK_ONLY:sdk_hosting>)
-      if (MSVC)
-            set_property(TARGET ${MODULE} PROPERTY CXX_STANDARD 20)
-            set_property(TARGET ${MODULE} PROPERTY CXX_STANDARD_REQUIRED ON)
-      endif()
+      target_link_libraries(${MODULE} vst3sdk_hosting)
 endif()
 
 if (BUILD_PCH)

@@ -1,37 +1,55 @@
 //=============================================================================
 //  MuseScore
 //  VST3 instrument synthesizer
-//
-//  Copyright (C) 2026 MuseScore contributors
-//
-//  This program is free software; you can redistribute it and/or modify
-//  it under the terms of the GNU General Public License version 2.
 //=============================================================================
 
-#ifndef __VST3SYNTH_H__
-#define __VST3SYNTH_H__
+#ifndef MS_VST3SYNTH_H
+#define MS_VST3SYNTH_H
 
-#include "audio/midi/synthesizer.h"
-
+#include <array>
 #include <memory>
 
-class QWidget;
+#include <QMap>
+#include <QMutex>
+#include <QStringList>
+
+#include "audio/midi/midipatch.h"
+#include "audio/midi/synthesizer.h"
+#include "vst3plugin.h"
+
+#include "public.sdk/source/vst/hosting/hostclasses.h"
 
 namespace Ms {
 
-struct MidiPatch;
-class PlayEvent;
+class Vst3Gui;
 
-//---------------------------------------------------------
-//   Vst3Synth
-//---------------------------------------------------------
+class Vst3Synth : public Synthesizer {
+      static constexpr int CHANNEL_COUNT = 256;
 
-class Vst3Synth final : public Synthesizer {
-      class Impl;
-      std::unique_ptr<Impl> _impl;
+      struct SavedInstance {
+            int bank { 0 };
+            int program { 0 };
+            QString path;
+            QString classId;
+            Vst3PluginState state;
+            };
+
+      std::array<std::shared_ptr<Vst3Plugin>, CHANNEL_COUNT> _instances;
       QList<MidiPatch*> _patches;
+      QList<Vst3PluginDescriptor> _descriptors;
+      QStringList _customDirectories;
+      QStringList _scanErrors;
+      QMap<int, SavedInstance> _savedInstances;
+      SynthesizerGroup _stateCache;
+      Steinberg::Vst::HostApplication _hostApplication;
+      mutable QMutex _metadataMutex;
 
-      void updatePatchList();
+      const Vst3PluginDescriptor* descriptorForPatch(int bank, int program) const;
+      void rebuildPatchList();
+      void loadCustomDirectories();
+      void saveCustomDirectories() const;
+      QStringList pluginPaths() const;
+      bool isInstrument(const VST3::Hosting::ClassInfo&) const;
 
    public:
       Vst3Synth();
@@ -39,40 +57,40 @@ class Vst3Synth final : public Synthesizer {
 
       const char* name() const override { return "VST3"; }
       void init(float sampleRate) override;
-      void process(unsigned frames, float* buffer, float*, float*) override;
-      void play(const PlayEvent& event) override;
-      void setPlaybackState(bool playing, double tempoBpm) override;
-      void reset() override;
+      void process(unsigned, float*, float*, float*) override;
+      void play(const PlayEvent&) override;
+      void setPlaybackState(bool, double) override;
 
-      bool loadPlugin(const QString& path, const QString& classUid = QString(),
-                      const QByteArray& componentState = QByteArray(),
-                      const QByteArray& controllerState = QByteArray());
-      void unloadPlugin();
-      bool isLoaded() const;
-      QString pluginPath() const;
-      QString pluginName() const;
-      QString lastError() const;
-      QStringList availablePlugins() const;
-      bool isInstrumentPlugin(const QString& path) const;
-      void servicePlugin();
-      bool showEditor(QWidget* parent = nullptr);
-      void closeEditor();
-
-      bool loadSoundFonts(const QStringList& paths) override;
-      bool addSoundFont(const QString& path) override;
-      bool removeSoundFont(const QString& path) override;
-      std::vector<SoundFontInfo> soundFontsInfo() const override;
-
-      const QList<MidiPatch*>& getPatchInfo() const override { return _patches; }
-      void prepareState() override;
-      SynthesizerGroup state() const override;
-      bool setState(const SynthesizerGroup& state) override;
-
+      bool prepareChannel(int channel, int bank, int program) override;
+      void releaseChannel(int channel) override;
+      bool hasEditor(int channel) const override;
+      bool openEditor(int channel, QWidget* parent) override;
       void allSoundsOff(int channel) override;
       void allNotesOff(int channel) override;
+      void reset() override;
+
+      bool loadSoundFonts(const QStringList&) override;
+      bool addSoundFont(const QString&) override;
+      bool removeSoundFont(const QString&) override;
+      std::vector<SoundFontInfo> soundFontsInfo() const override;
+      const QList<MidiPatch*>& getPatchInfo() const override { return _patches; }
+
+      void prepareState() override;
+      SynthesizerGroup state() const override;
+      bool setState(const SynthesizerGroup&) override;
       SynthesizerGui* gui() override;
+
+      bool rescanPlugins();
+      bool addCustomDirectory(const QString&);
+      bool removeCustomDirectory(const QString&);
+      QStringList customDirectories() const;
+      QList<Vst3PluginDescriptor> descriptors() const;
+      QStringList scanErrors() const;
+      int activeChannel(int bank, int program) const;
       };
+
+Synthesizer* createVst3Synth();
 
 } // namespace Ms
 
-#endif
+#endif // MS_VST3SYNTH_H
