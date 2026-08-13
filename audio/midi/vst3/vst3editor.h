@@ -9,14 +9,11 @@
 #include <memory>
 
 #include <QDialog>
-#include <QPointer>
 
 #include "pluginterfaces/base/funknown.h"
 #include "pluginterfaces/base/ipluginbase.h"
 #include "pluginterfaces/base/smartpointer.h"
 #include "pluginterfaces/gui/iplugview.h"
-
-class QWindow;
 
 namespace Ms {
 
@@ -28,7 +25,6 @@ class Vst3EditorDialog : public QDialog, public Steinberg::IPlugFrame {
       std::shared_ptr<Vst3Plugin> _plugin;
       Steinberg::IPtr<Steinberg::IPlugView> _view;
       double _scaleFactor { 1.0 };
-      QPointer<QWindow> _transientOwner;
 
       Steinberg::FIDString platformType() const;
       void sizeToPlugin();

@@ -10,9 +10,7 @@
 #include <QApplication>
 #include <QEvent>
 #include <QKeyEvent>
-#include <QMainWindow>
 #include <QTimer>
-#include <QWindow>
 
 #include "vst3plugin.h"
 
@@ -21,35 +19,6 @@
 namespace Ms {
 
 using namespace Steinberg;
-
-namespace {
-
-QWindow* editorWindowOwner(QWidget* parent)
-      {
-      QWidget* owner = nullptr;
-      for (QWidget* candidate = parent; candidate; candidate = candidate->parentWidget()) {
-            if (qobject_cast<QMainWindow*>(candidate)) {
-                  owner = candidate;
-                  break;
-                  }
-            }
-      if (!owner) {
-            for (QWidget* candidate : QApplication::topLevelWidgets()) {
-                  if (qobject_cast<QMainWindow*>(candidate)) {
-                        owner = candidate;
-                        break;
-                        }
-                  }
-            }
-      if (!owner && parent)
-            owner = parent->window();
-      if (!owner)
-            return nullptr;
-      owner->createWinId();
-      return owner->windowHandle();
-      }
-
-} // namespace
 
 uint32 PLUGIN_API Vst3EditorDialog::addRef()
       {
@@ -66,11 +35,14 @@ uint32 PLUGIN_API Vst3EditorDialog::release()
 IMPLEMENT_QUERYINTERFACE(Vst3EditorDialog, IPlugFrame, IPlugFrame::iid)
 
 Vst3EditorDialog::Vst3EditorDialog(std::shared_ptr<Vst3Plugin> plugin, QWidget* parent)
-   : QDialog(nullptr), _plugin(std::move(plugin)), _transientOwner(editorWindowOwner(parent))
+   : QDialog(nullptr), _plugin(std::move(plugin))
       {
+      Q_UNUSED(parent);
       setAttribute(Qt::WA_NativeWindow);
       setAttribute(Qt::WA_DeleteOnClose);
       setWindowModality(Qt::NonModal);
+      setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint
+                     | Qt::WindowMinimizeButtonHint | Qt::WindowCloseButtonHint);
       setWindowFlag(Qt::WindowContextHelpButtonHint, false);
       setWindowTitle(_plugin ? _plugin->descriptor().displayName() : tr("VST3 editor"));
       }
@@ -147,9 +119,6 @@ tresult PLUGIN_API Vst3EditorDialog::resizeView(IPlugView* view, ViewRect* newSi
 
 bool Vst3EditorDialog::event(QEvent* event)
       {
-      if (event && event->type() == QEvent::Show && _transientOwner && windowHandle())
-            windowHandle()->setTransientParent(_transientOwner);
-
       if (event && event->spontaneous() && event->type() == QEvent::ShortcutOverride) {
             auto* keyEvent = dynamic_cast<QKeyEvent*>(event);
             if (keyEvent && (keyEvent->key() == 0 || keyEvent->key() == Qt::Key_unknown)) {
