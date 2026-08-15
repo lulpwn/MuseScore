@@ -2304,8 +2304,12 @@ void Score::createPlayEvents(Chord* chord)
                   break;
                   }
             }
-      // gateTime is 100% for slured notes
-      if (!slur) {
+      // Use a slightly overlapped note length for slurred notes.
+      // NoteEvent lengths are stored in 1/1000 of the nominal note length,
+      // so 110% gate time turns the normal 1000 length into 1100.
+      if (slur)
+            gateTime = 110;
+      else {
             Instrument* instr = chord->part()->instrument(tick);
             instr->updateGateTime(&gateTime, 0, "");
             }

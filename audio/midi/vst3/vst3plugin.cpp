@@ -256,7 +256,7 @@ void Vst3Plugin::handleEvent(const PlayEvent& event)
                         vstEvent.noteOff.pitch = static_cast<int16>(pitch);
                         vstEvent.noteOff.velocity = _activeNoteVelocities[pitch];
                         vstEvent.noteOff.noteId = -1;
-                        vstEvent.noteOff.tuning = _activeNoteTunings[pitch];
+                        vstEvent.noteOff.tuning = 0.0f;
                         _activeNotes[pitch] = false;
                         }
                   else {
@@ -265,12 +265,17 @@ void Vst3Plugin::handleEvent(const PlayEvent& event)
                         vstEvent.type = Steinberg::Vst::Event::kNoteOnEvent;
                         vstEvent.noteOn.channel = 0;
                         vstEvent.noteOn.pitch = static_cast<int16>(pitch);
-                        vstEvent.noteOn.tuning = event.tuning();
+                        // This VST path is intended for piano-style playback.
+                        // Keep pitch neutral and avoid passing MuseScore
+                        // micro-tuning through to plug-ins, since some piano
+                        // VSTs can retain or interpret tuning in surprising
+                        // ways after playback/preview interruption.
+                        vstEvent.noteOn.tuning = 0.0f;
                         vstEvent.noteOn.velocity = static_cast<float>(normalized7Bit(event.velo()));
                         vstEvent.noteOn.length = 0;
                         vstEvent.noteOn.noteId = -1;
                         _activeNotes[pitch] = true;
-                        _activeNoteTunings[pitch] = vstEvent.noteOn.tuning;
+                        _activeNoteTunings[pitch] = 0.0f;
                         _activeNoteVelocities[pitch] = vstEvent.noteOn.velocity;
                         _silenceOutputUntilNoteOn.store(false, std::memory_order_release);
                         }
@@ -286,37 +291,27 @@ void Vst3Plugin::handleEvent(const PlayEvent& event)
                   vstEvent.noteOff.pitch = static_cast<int16>(pitch);
                   vstEvent.noteOff.velocity = _activeNoteVelocities[pitch];
                   vstEvent.noteOff.noteId = -1;
-                  vstEvent.noteOff.tuning = _activeNoteTunings[pitch];
+                  vstEvent.noteOff.tuning = 0.0f;
                   _activeNotes[pitch] = false;
                   _events.addEvent(vstEvent);
                   break;
 
             case ME_POLYAFTER:
-                  vstEvent.type = Steinberg::Vst::Event::kPolyPressureEvent;
-                  vstEvent.polyPressure.channel = 0;
-                  vstEvent.polyPressure.pitch = static_cast<int16>(event.pitch());
-                  vstEvent.polyPressure.pressure = static_cast<float>(normalized7Bit(event.value()));
-                  vstEvent.polyPressure.noteId = -1;
-                  _events.addEvent(vstEvent);
                   break;
 
             case ME_CONTROLLER:
                   if (event.controller() == CTRL_ALL_NOTES_OFF
                       || event.controller() == CTRL_ALL_SOUNDS_OFF)
                         allNotesOff();
-                  else
+                  else if (event.controller() == CTRL_SUSTAIN)
                         queueController(event.controller(), normalized7Bit(event.value()));
                   break;
 
             case ME_AFTERTOUCH:
-                  queueController(kAfterTouch, normalized7Bit(event.value()));
                   break;
 
-            case ME_PITCHBEND: {
-                  const int bend = (event.value() << 7) | event.dataA();
-                  queueController(kPitchBend, std::max(0.0, std::min(1.0, bend / 16383.0)));
+            case ME_PITCHBEND:
                   break;
-                  }
 
             default:
                   break;
