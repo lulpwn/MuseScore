@@ -201,7 +201,9 @@ void Preferences::init(bool storeInMemoryOnly)
             {PREF_IO_MIDI_EXPANDREPEATS,                           new BoolPreference(true, false)},
             {PREF_IO_MIDI_EXPORTRPNS,                              new BoolPreference(true, false)},
             {PREF_IO_MIDI_SPACELYRICS,                             new BoolPreference(true, true)},
-            {PREF_IO_MIDI_PEDAL_EVENTS_MIN_TICKS,                  new IntPreference(1)},
+            // Legacy tick-based key kept for compatibility with older config files.
+            {PREF_IO_MIDI_PEDAL_EVENTS_MIN_TICKS,                  new IntPreference(1, false)},
+            {PREF_IO_MIDI_PEDAL_EVENTS_MIN_MILLISECONDS,           new IntPreference(20)},
             {PREF_IO_MIDI_REALTIMEDELAY,                           new IntPreference(750 /* ms */, false)},
             {PREF_IO_MIDI_SHORTESTNOTE,                            new IntPreference(DIVISION/4, false)},
             {PREF_IO_MIDI_SHOWCONTROLSINMIXER,                     new BoolPreference(true, false)},

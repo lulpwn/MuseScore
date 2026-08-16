@@ -7,7 +7,6 @@
 
 #include <algorithm>
 
-#include <QApplication>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QTimer>
@@ -34,12 +33,12 @@ uint32 PLUGIN_API Vst3EditorDialog::release()
 
 IMPLEMENT_QUERYINTERFACE(Vst3EditorDialog, IPlugFrame, IPlugFrame::iid)
 
-Vst3EditorDialog::Vst3EditorDialog(std::shared_ptr<Vst3Plugin> plugin, QWidget* parent)
-   : QDialog(nullptr), _plugin(std::move(plugin))
+Vst3EditorDialog::Vst3EditorDialog(std::shared_ptr<Vst3Plugin> plugin)
+   : QWidget(nullptr), _plugin(std::move(plugin))
       {
-      Q_UNUSED(parent);
       setAttribute(Qt::WA_NativeWindow);
       setAttribute(Qt::WA_DeleteOnClose);
+      setAttribute(Qt::WA_QuitOnClose, false);
       setWindowModality(Qt::NonModal);
       setWindowFlags(Qt::Window | Qt::WindowTitleHint | Qt::WindowSystemMenuHint
                      | Qt::WindowMinimizeButtonHint | Qt::WindowCloseButtonHint);
@@ -126,7 +125,7 @@ bool Vst3EditorDialog::event(QEvent* event)
                   return true;
                   }
             }
-      return QDialog::event(event);
+      return QWidget::event(event);
       }
 
 } // namespace Ms

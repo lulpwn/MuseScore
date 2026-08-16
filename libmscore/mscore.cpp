@@ -80,7 +80,7 @@ QColor  MScore::bgColor;
 QColor  MScore::dropColor;
 bool    MScore::warnPitchRange;
 bool    MScore::disableMouseEntry;
-int     MScore::pedalEventsMinTicks;
+int     MScore::pedalEventsMinMilliseconds;
 
 bool    MScore::harmonyPlayDisableCompatibility;
 bool    MScore::harmonyPlayDisableNew;
@@ -288,7 +288,7 @@ void MScore::init()
       dropColor              = QColor(0x1778db);
       defaultPlayDuration    = 300;      // ms
       warnPitchRange         = true;
-      pedalEventsMinTicks    = 1;
+      pedalEventsMinMilliseconds = 20;
       playRepeats            = true;
       panPlayback            = true;
       playbackSpeedIncrement = 5;

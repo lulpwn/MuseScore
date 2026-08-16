@@ -17,6 +17,8 @@
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QPointer>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -256,10 +258,15 @@ void Vst3Gui::openSelectedEditor()
       if (channel < 0)
             return;
 
-      if (!vstSynth()->hasEditor(channel) || !vstSynth()->openEditor(channel, this)) {
-            QMessageBox::warning(this, tr("VST3 editor"),
-                                 tr("This VST3 instrument did not provide a compatible native editor."));
-            }
+      QPointer<Vst3Gui> guard(this);
+      QTimer::singleShot(0, this, [guard, channel]() {
+            if (!guard)
+                  return;
+            if (!guard->vstSynth()->hasEditor(channel) || !guard->vstSynth()->openEditor(channel, nullptr)) {
+                  QMessageBox::warning(guard, tr("VST3 editor"),
+                                       tr("This VST3 instrument did not provide a compatible native editor."));
+                  }
+            });
       updateButtons();
       }
 

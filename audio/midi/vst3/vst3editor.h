@@ -8,7 +8,7 @@
 
 #include <memory>
 
-#include <QDialog>
+#include <QWidget>
 
 #include "pluginterfaces/base/funknown.h"
 #include "pluginterfaces/base/ipluginbase.h"
@@ -19,7 +19,7 @@ namespace Ms {
 
 class Vst3Plugin;
 
-class Vst3EditorDialog : public QDialog, public Steinberg::IPlugFrame {
+class Vst3EditorDialog : public QWidget, public Steinberg::IPlugFrame {
       DECLARE_FUNKNOWN_METHODS
 
       std::shared_ptr<Vst3Plugin> _plugin;
@@ -33,7 +33,7 @@ class Vst3EditorDialog : public QDialog, public Steinberg::IPlugFrame {
       bool event(QEvent*) override;
 
    public:
-      explicit Vst3EditorDialog(std::shared_ptr<Vst3Plugin>, QWidget* parent = nullptr);
+      explicit Vst3EditorDialog(std::shared_ptr<Vst3Plugin>);
       ~Vst3EditorDialog() override;
 
       bool attachPluginView();

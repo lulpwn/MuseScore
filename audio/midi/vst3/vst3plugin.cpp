@@ -475,13 +475,14 @@ bool Vst3Plugin::openEditor(QWidget* parent)
             return true;
             }
 
-      auto* dialog = new Vst3EditorDialog(shared_from_this(), parent);
+      Q_UNUSED(parent);
+      auto* dialog = new Vst3EditorDialog(shared_from_this());
       if (!dialog->attachPluginView()) {
             delete dialog;
             return false;
             }
       _editor = dialog;
-      dialog->show();
+      dialog->showNormal();
       dialog->raise();
       dialog->activateWindow();
       return true;

@@ -1094,14 +1094,23 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
       const int tick1 = chunk.tick1();
       const int tick2 = chunk.tick2();
 
-      // This preference is the requested repedal gap after CC64 off.  Pedal-off
-      // stays on the notated boundary and the following pedal-down is delayed.
-      // Accept the magnitude of legacy negative values as well.
-      const long long configuredPedalGap = static_cast<long long>(MScore::pedalEventsMinTicks);
-      const long long pedalGapMagnitude = configuredPedalGap < 0
-                                        ? -configuredPedalGap : configuredPedalGap;
-      const int pedalResetGap = static_cast<int>(std::min<long long>(
-         pedalGapMagnitude, std::numeric_limits<int>::max() / 4));
+      // This preference is the requested repedal gap after CC64 off, in
+      // milliseconds.  Pedal-off stays on the notated boundary and the
+      // following pedal-down is delayed by real playback time so the gap stays
+      // consistent across different tempos.
+      const long long configuredPedalGapMs = static_cast<long long>(MScore::pedalEventsMinMilliseconds);
+      const long long pedalGapMsMagnitude = configuredPedalGapMs < 0
+                                          ? -configuredPedalGapMs : configuredPedalGapMs;
+      const qreal pedalResetGapSeconds = qreal(std::min<long long>(
+         pedalGapMsMagnitude, std::numeric_limits<int>::max() / 4)) / 1000.0;
+
+      auto addPlaybackMilliseconds = [this](int utick, qreal seconds) {
+            if (seconds <= 0.0)
+                  return utick;
+            const qreal startSeconds = score->utick2utime(utick);
+            const int delayedTick = score->utime2utick(startSeconds + seconds);
+            return std::max(utick + 1, delayedTick);
+            };
 
       std::map<int, std::vector<std::pair<int, std::pair<bool, int> > > > channelPedalEvents;
       for (const auto& sp : score->spannerMap().map()) {
@@ -1150,7 +1159,7 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
                                     pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
                                        correctedOffTick, std::pair<bool, int>(false, staff)));
                                     }
-                              currentPedalOnTick += pedalResetGap;
+                              currentPedalOnTick = addPlaybackMilliseconds(currentPedalOnTick, pedalResetGapSeconds);
                               }
                         pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
                            currentPedalOnTick, std::pair<bool, int>(true, staff)));
