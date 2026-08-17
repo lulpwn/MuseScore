@@ -310,6 +310,46 @@ static void playNote(EventMap* events, const Note* note, int channel, int pitch,
 //   collectNote
 //---------------------------------------------------------
 
+static int velocityOffsetValue(const VelocityOffsetRamp& ramp, Fraction tick)
+      {
+      if (tick < ramp.start || tick > ramp.end || ramp.end <= ramp.start || ramp.change == 0)
+            return 0;
+
+      const int lengthTicks = std::max(1, (ramp.end - ramp.start).ticks());
+      const int currentTicks = qBound(0, (tick - ramp.start).ticks(), lengthTicks);
+      const qreal progress = qreal(currentTicks) / qreal(lengthTicks);
+      qreal shapedProgress = progress;
+      constexpr qreal PI = 3.14159265358979323846;
+
+      switch (ramp.method) {
+            case ChangeMethod::EXPONENTIAL:
+                  shapedProgress = progress <= 0.0 ? 0.0 : (std::pow(2.0, progress) - 1.0);
+                  break;
+            case ChangeMethod::EASE_IN:
+                  shapedProgress = std::sin((progress - 1.0) * (PI / 2.0)) + 1.0;
+                  break;
+            case ChangeMethod::EASE_OUT:
+                  shapedProgress = std::sin(progress * (PI / 2.0));
+                  break;
+            case ChangeMethod::EASE_IN_OUT:
+                  shapedProgress = (std::sin(progress * PI - (PI / 2.0)) + 1.0) / 2.0;
+                  break;
+            case ChangeMethod::NORMAL:
+            default:
+                  break;
+            }
+
+      return int(qRound(qreal(ramp.change) * shapedProgress));
+      }
+
+static int staffPlaybackVelocity(Staff* staff, Fraction tick)
+      {
+      int velo = staff->velocities().val(tick);
+      for (const VelocityOffsetRamp& ramp : staff->velocityOffsets())
+            velo += velocityOffsetValue(ramp, tick);
+      return qBound(1, velo, 127);
+      }
+
 static void collectNote(EventMap* events, int channel, const Note* note, qreal velocityMultiplier, int tickOffset, Staff* staff, SndConfig config)
       {
       if (!note->play() || note->hidden())      // do not play overlapping notes
@@ -387,12 +427,12 @@ static void collectNote(EventMap* events, int channel, const Note* note, qreal v
                               break;
                         case DynamicsRenderMethod::SEG_START:
                         default:
-                              velo = staff->velocities().val(nonUnwoundTick);
+                              velo = staffPlaybackVelocity(staff, nonUnwoundTick);
                               break;
                         }
                   }
             else {
-                  velo = staff->velocities().val(nonUnwoundTick);
+                  velo = staffPlaybackVelocity(staff, nonUnwoundTick);
                   }
 
             velo *= velocityMultiplier;
@@ -665,7 +705,7 @@ static void renderHarmony(EventMap* events, Measure const * m, Harmony* h, int t
             return;
 
       int staffIdx = staff->idx();
-      int velocity = staff->velocities().val(h->tick());
+      int velocity = staffPlaybackVelocity(staff, h->tick());
 
       RealizedHarmony r = h->getRealizedHarmony();
       QList<int> pitches = r.pitches();
@@ -905,9 +945,35 @@ void Score::updateHairpin(Hairpin* h)
             direction = ChangeDirection::DECREASING;
             }
 
+      auto overlapsBroaderHairpin = [this, h, st, tick, tick2]() {
+            for (const auto& sp : spannerMap().map()) {
+                  Spanner* s = sp.second;
+                  if (!s || s == h || s->type() != ElementType::HAIRPIN)
+                        continue;
+
+                  Hairpin* other = toHairpin(s);
+                  if (other->dynRange() == Dynamic::Range::STAFF)
+                        continue;
+
+                  const bool overlaps = tick < other->tick2() && other->tick() < tick2;
+                  if (!overlaps)
+                        continue;
+
+                  if (other->dynRange() == Dynamic::Range::SYSTEM)
+                        return true;
+
+                  if (other->dynRange() == Dynamic::Range::PART && other->staff()->part() == st->part())
+                        return true;
+                  }
+            return false;
+            };
+
       switch (h->dynRange()) {
             case Dynamic::Range::STAFF:
-                  st->velocities().addRamp(tick, tick2, veloChange, method, direction);
+                  if (overlapsBroaderHairpin())
+                        st->velocityOffsets().push_back(VelocityOffsetRamp { tick, tick2, veloChange, method });
+                  else
+                        st->velocities().addRamp(tick, tick2, veloChange, method, direction);
                   break;
             case Dynamic::Range::PART:
                   for (Staff*& s : *st->part()->staves()) {
@@ -938,6 +1004,7 @@ void Score::updateVelo()
       for (Staff* st : qAsConst(_staves)) {
             st->velocities().clear();
             st->velocityMultiplications().clear();
+            st->velocityOffsets().clear();
             }
       for (int staffIdx = 0; staffIdx < nstaves(); ++staffIdx) {
             Staff* st      = staff(staffIdx);

@@ -13,6 +13,8 @@
 #ifndef __STAFF_H__
 #define __STAFF_H__
 
+#include <vector>
+
 /**
  \file
  Definition of class Staff.
@@ -53,6 +55,19 @@ enum class Key : signed char;
 struct SwingParameters {
       int swingUnit;
       int swingRatio;
+      };
+
+//---------------------------------------------------------
+//   VelocityOffsetRamp
+//    local staff-only velocity ramp layered on top of the
+//    normal staff velocity map during MIDI rendering
+//---------------------------------------------------------
+
+struct VelocityOffsetRamp {
+      Fraction start;
+      Fraction end;
+      int change { 0 };
+      ChangeMethod method { ChangeMethod::NORMAL };
       };
 
 //---------------------------------------------------------
@@ -97,6 +112,7 @@ class Staff final : public ScoreElement {
 
       ChangeMap _velocities;         ///< cached value
       ChangeMap _velocityMultiplications;         ///< cached value
+      std::vector<VelocityOffsetRamp> _velocityOffsets; ///< cached local staff-only hairpin offsets
       PitchList _pitchOffsets;      ///< cached value
 
       void fillBrackets(int);
@@ -236,6 +252,7 @@ class Staff final : public ScoreElement {
 
       ChangeMap& velocities()           { return _velocities;     }
       ChangeMap& velocityMultiplications()      { return _velocityMultiplications;     }
+      std::vector<VelocityOffsetRamp>& velocityOffsets() { return _velocityOffsets; }
       PitchList& pitchOffsets()        { return _pitchOffsets;   }
 
       int pitchOffset(const Fraction& tick) const { return _pitchOffsets.pitchOffset(tick.ticks());   }
