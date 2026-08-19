@@ -1472,12 +1472,11 @@ qreal System::topDistance(int staffIdx, const SkylineLine& s) const
       {
       Q_ASSERT(!vbox());
       Q_ASSERT(!s.isNorth());
-      // in continuous view, we only build a partial skyline for performance reasons
-      // this means we cannot expect the minDistance calculation to produce meaningful results
-      // so just give up on autoplace for spanners in continuous view
-      // (or any other calculations that rely on this value)
-      if (score()->lineMode())
-            return 0.0;
+      // Continuous view uses the same staff/system skyline data for staff
+      // spacing, so keep using it for spanner autoplacement as well.
+      // Returning 0 here makes hairpins, ottavas and other spanners believe
+      // there is no collision, causing them to overlap notes in continuous view
+      // even when page view places them correctly.
       return s.minDistance(staff(staffIdx)->skyline().north());
       }
 
@@ -1489,9 +1488,6 @@ qreal System::bottomDistance(int staffIdx, const SkylineLine& s) const
       {
       Q_ASSERT(!vbox());
       Q_ASSERT(s.isNorth());
-      // see note on topDistance() above
-      if (score()->lineMode())
-            return 0.0;
       return staff(staffIdx)->skyline().south().minDistance(s);
       }
 

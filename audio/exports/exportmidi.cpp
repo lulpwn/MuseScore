@@ -33,6 +33,21 @@
 namespace Ms {
 
 //---------------------------------------------------------
+//   shouldExportControllerEvent
+//    MuseScore represents some non-CC MIDI events internally
+//    as ME_CONTROLLER with special controller ids.  Strip real
+//    exported CC data down to sustain pedal only, but keep these
+//    special events so they still write as Program Change/Aftertouch.
+//---------------------------------------------------------
+
+static bool shouldExportControllerEvent(int controller)
+      {
+      return controller == CTRL_SUSTAIN
+             || controller == CTRL_PROGRAM
+             || controller == CTRL_PRESS;
+      }
+
+//---------------------------------------------------------
 //   writeHeader
 //---------------------------------------------------------
 
@@ -270,32 +285,8 @@ bool ExportMidi::write(QIODevice* device, bool midiExpandRepeats, bool exportRPN
                         char channel = part->masterScore()->midiChannel(ch->channel());
 
                         if (staff->isTop()) {
-                              track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_RESET_ALL_CTRL, 0));
-                              // We need this to get the correct pitch of bends
-                              // Hidden under preferences because some software
-                              // crashes when receiving RPNs: https://musescore.org/en/node/37431
-                              if (channel != 9 && exportRPNs) {
-                                    // set pitch bend sensitivity to 12 semitones:
-                                    track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_LRPN, 0));
-                                    track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_HRPN, 0));
-                                    track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_HDATA, 12));
-
-                                    // reset fine tuning
-                                    /*track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_LRPN, 1));
-                                    track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_HRPN, 0));
-                                    track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_HDATA, 64));*/
-
-                                    // deactivate rpn
-                                    track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_LRPN, 127));
-                                    track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_HRPN, 127));
-                              }
-
                               if (ch->program() != -1)
                                     track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_PROGRAM, ch->program()));
-                              track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_VOLUME, ch->volume()));
-                              track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_PANPOT, ch->pan()));
-                              track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_REVERB_SEND, ch->reverb()));
-                              track.insert(0, MidiEvent(ME_CONTROLLER, channel, CTRL_CHORUS_SEND, ch->chorus()));
                               }
 
                         // Export port to MIDI META event
@@ -325,8 +316,8 @@ bool ExportMidi::write(QIODevice* device, bool midiExpandRepeats, bool exportRPN
                                     // ignore noteoff but restrike noteon
                                     continue;
 
-                              if (!exportRPNs && event.type() == ME_CONTROLLER && event.portamento())
-                                    // ignore portamento control events if exportRPN isn't switched on
+                              if (event.type() == ME_CONTROLLER && !shouldExportControllerEvent(event.controller()))
+                                    // Strip exported CC data down to sustain pedal only.
                                     continue;
 
                               char eventPort    = cs->masterScore()->midiPort(event.channel());
