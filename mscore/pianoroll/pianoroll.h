@@ -1,110 +1,119 @@
 //=============================================================================
 //  MuseScore
-//  Music Composition & Notation
-//
-//  Copyright (C) 2009-2011 Werner Schweer
-//
-//  This program is free software; you can redistribute it and/or modify
-//  it under the terms of the GNU General Public License version 2
-//  as published by the Free Software Foundation and appearing in
-//  the file LICENCE.GPL
+//  Key Editor window
 //=============================================================================
 
 #ifndef __PIANOROLL_H__
 #define __PIANOROLL_H__
 
-namespace Awl {
-      class PitchEdit;
-      class PosLabel;
-      };
-
 #include "libmscore/mscoreview.h"
 #include "libmscore/pos.h"
-#include "libmscore/score.h"
 #include "libmscore/select.h"
+#include "keyeditormodel.h"
 #include "pianorolledittool.h"
+
+#include <QList>
+#include <QMainWindow>
+
+class QAction;
+class QButtonGroup;
+class QComboBox;
+class QLabel;
+class QSpinBox;
+class QToolButton;
 
 namespace Ms {
 
-class Score;
-class Staff;
-class PianoView;
-class PianoKeyboard;
-class PianoLevels;
-class PianoLevelsChooser;
-class NoteTweakerDialog;
+class Element;
+class KeyEditorView;
 class Note;
-class PianoRuler;
+struct Position;
+class Score;
 class Seq;
-class WaveView;
+class Staff;
+enum class POS : char;
 
-//---------------------------------------------------------
-//   PianorollEditor
-//---------------------------------------------------------
-
-class PianorollEditor : public QMainWindow, public MuseScoreView {
+class PianorollEditor final : public QMainWindow, public MuseScoreView
+      {
       Q_OBJECT
 
-      PianoView* pianoView;
-      PianoKeyboard* pianoKbd;
-      PianoLevels* pianoLevels;
-      PianoLevelsChooser* pianoLevelsChooser;
-      QScrollBar* hsb;        // horizontal scroll bar for pianoView
-      Score* _score;
-      Staff* staff;
-      QLabel* partLabel;
-      Awl::PitchEdit* pitch;
-      QSpinBox* velocity;
-      QSpinBox* onTime;
-      QSpinBox* tickLen;
-      Pos locator[3];
-      QComboBox* barPattern;
-      QComboBox* veloType;
-      QSpinBox* subdiv;
-      QSpinBox* tuplet;
-      Awl::PosLabel* pos;
-      PianoRuler* ruler;
-      QAction* showWave;
-      WaveView* waveView;
-      QSplitter* split;
-      QList<QAction*> actions;
+      Staff* _staff { nullptr };
+      QList<Staff*> _partStaves;
+      KeyEditorModel* _model { nullptr };
+      KeyEditorView* _view { nullptr };
+      Pos _locators[3];
+      bool _updateScheduled { false };
+      int _auditionChannel { -1 };
+      int _auditionPitch { -1 };
+      bool _velocityDirty { false };
+      bool _onTimeDirty { false };
+      bool _eventLengthDirty { false };
+      bool _selectionFromPianoRoll { false };
 
-      bool updateScheduled = false;
-      NoteTweakerDialog* noteTweakerDlg;
+      QComboBox* _trackSelector { nullptr };
+      QLabel* _editTargetLabel { nullptr };
+      QComboBox* _editTargetSelector { nullptr };
+      QToolButton* _snapButton { nullptr };
+      QComboBox* _gridSelector { nullptr };
+      QComboBox* _laneSelector { nullptr };
+      QComboBox* _laneToolSelector { nullptr };
+      QToolButton* _followButton { nullptr };
+      QButtonGroup* _editToolGroup { nullptr };
 
-      void updateVelocity(Note* note);
-      void updateSelection();
+      QSpinBox* _velocityField { nullptr };
+      QSpinBox* _onTimeField { nullptr };
+      QSpinBox* _eventLengthField { nullptr };
+      QLabel* _selectionSummary { nullptr };
+      QLabel* _cursorSummary { nullptr };
+
+      QList<QAction*> _shortcutActions;
+
+      void buildUi();
+      void attachScore(Score*);
+      void detachScore(bool removeViewer);
+      void rebuildScopeSelectors(Staff*);
+      void updateScope();
+      void updateSelectionFields();
+      void updateWindowTitle();
+      void scheduleRebuild();
       void readSettings();
-      void doUpdate();
-
+      Staff* selectedEditStaff() const;
+      int selectedGridTicks() const;
+      QVector<KeyEditorModel::NoteEdit> selectedEdits() const;
+      bool applySelectedEdits(const QVector<KeyEditorModel::NoteEdit>&);
+      void focusSelectedNoteInPianoRoll();
+      void focusScoreOnNote(Note*);
 
    private slots:
+      void doRebuild();
+      void trackChanged(int);
+      void editTargetChanged(int);
+      void gridChanged(int);
+      void laneChanged(int);
+      void laneToolChanged(int);
+      void editToolChanged(int);
       void selectionChanged();
-      void veloTypeChanged(int);
-      void velocityChanged(int);
-      void keyPressed(int);
-      void keyReleased(int);
-      void moveLocator(int, const Pos&);
-      void cmd(QAction*);
-      void rangeChanged(int min, int max);
-      void setXpos(int x);
-      void showWaveView(bool);
-      void posChanged(POS pos, unsigned tick);
-      void tickLenChanged(int);
-      void onTimeChanged(int val);
+      void cursorChanged(int tick, int pitch);
+      void seekToTick(int tick);
+      void pitchPressed(int pitch, int staffIdx);
+      void pitchReleased(int pitch);
+      void scorePositionChanged(POS, unsigned tick);
       void playlistChanged();
+      void commitVelocity();
+      void commitOnTime();
+      void commitEventLength();
 
    public slots:
       void changeSelection(SelState);
       void handleAction(QAction*);
-      void showNoteTweaker();
 
    public:
-      PianorollEditor(QWidget* parent = 0);
-      virtual ~PianorollEditor();
+      explicit PianorollEditor(QWidget* parent = nullptr);
+      ~PianorollEditor() override;
 
-      void setStaff(Staff* staff);
-      void focusOnPosition(Position* p);
+      void setScore(Score*) override;
+      void setStaff(Staff*);
+      void focusOnPosition(Position*);
       void heartBeat(Seq*);
 
       void setEditNoteLength(int);
@@ -112,26 +121,21 @@ class PianorollEditor : public QMainWindow, public MuseScoreView {
       void setEditNoteTool(PianoRollEditTool);
       void setEditNoteDots(int, QToolButton*);
 
-      virtual void dataChanged(const QRectF&) override;
-      virtual void updateAll() override;
-      virtual void removeScore() override;
-      virtual void changeEditElement(Element*) override;
-      virtual QCursor cursor() const override;
-      virtual void setCursor(const QCursor&) override;
-      const QTransform& matrix() const;
-      virtual Element* elementNear(QPointF) override;
-      virtual void drawBackground(QPainter* /*p*/, const QRectF& /*r*/) const override {}
-
-      void setLocator(POS posi, int tick) { locator[int(posi)].setTick(tick); }
+      void dataChanged(const QRectF&) override;
+      void updateAll() override;
+      void removeScore() override;
+      void changeEditElement(Element*) override;
+      void onElementDestruction(Element*) override;
+      QCursor cursor() const override;
+      void setCursor(const QCursor&) override;
+      Element* elementNear(QPointF) override;
+      void drawBackground(QPainter*, const QRectF&) const override {}
 
       void writeSettings();
-      virtual const QRect geometry() const override { return QMainWindow::geometry(); }
-
-      void zoom(int amount = 1, bool horiz = true);
+      const QRect geometry() const override { return QMainWindow::geometry(); }
+      void zoom(int amount = 1, bool horizontal = true);
       };
 
-
 } // namespace Ms
+
 #endif
-
-

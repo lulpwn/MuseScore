@@ -189,6 +189,7 @@ subdirs (
         libmscore/utils
         mscore/workspaces
         mscore/palette
+        mscore/pianoroll
         importmidi
         capella
         biab

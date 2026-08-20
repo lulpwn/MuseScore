@@ -1,1100 +1,962 @@
 //=============================================================================
 //  MuseScore
-//  Music Composition & Notation
-//
-//  Copyright (C) 2009-2013 Werner Schweer
-//
-//  This program is free software; you can redistribute it and/or modify
-//  it under the terms of the GNU General Public License version 2
-//  as published by the Free Software Foundation and appearing in
-//  the file LICENCE.GPL
+//  Key Editor window
 //=============================================================================
 
 #include "pianoroll.h"
-#include "shortcut.h"
-#include "config.h"
-#include "pianokeyboard.h"
-#include "pianoruler.h"
-#include "pianolevels.h"
-#include "pianolevelschooser.h"
-#include "pianoview.h"
+
+#include "keyeditorview.h"
 #include "musescore.h"
-#include "seq.h"
 #include "preferences.h"
-#include "waveview.h"
-#include "notetweakerdialog.h"
-#include "libmscore/staff.h"
+#include "seq.h"
+#include "shortcut.h"
+#include "scoreview.h"
+
+#include "libmscore/instrument.h"
 #include "libmscore/measure.h"
 #include "libmscore/note.h"
-#include "libmscore/repeatlist.h"
-#include "libmscore/undo.h"
 #include "libmscore/part.h"
-#include "libmscore/instrument.h"
-#include "awl/pitchlabel.h"
-#include "awl/pitchedit.h"
-#include "awl/poslabel.h"
+#include "libmscore/repeatlist.h"
+#include "libmscore/score.h"
+#include "libmscore/sig.h"
+#include "libmscore/staff.h"
 
+#include <QActionGroup>
+#include <QAbstractButton>
+#include <QButtonGroup>
+#include <QComboBox>
+#include <QIcon>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QPainter>
+#include <QPixmap>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QSizePolicy>
+#include <QSpinBox>
+#include <QStatusBar>
+#include <QTimer>
+#include <QToolBar>
+#include <QToolButton>
+#include <QVBoxLayout>
+
+#include <algorithm>
+#include <climits>
+#include <cmath>
 
 namespace Ms {
 
-//---------------------------------------------------------
-//   PianorollEditor
-//---------------------------------------------------------
+extern MuseScore* mscore;
+extern Seq* seq;
+
+static QString editorPitchName(int pitch)
+      {
+      static const char* names[] = { "C", "C♯", "D", "E♭", "E", "F",
+                                     "F♯", "G", "A♭", "A", "B♭", "B" };
+      return QString::fromUtf8(names[(pitch % 12 + 12) % 12])
+             + QString::number(pitch / 12 - 1);
+      }
+
+static QColor editorStaffColor(int ordinal)
+      {
+      static const QColor colors[] = {
+            QColor(74, 144, 226), QColor(238, 139, 61), QColor(68, 170, 117),
+            QColor(160, 112, 210), QColor(219, 90, 127), QColor(52, 174, 187)
+            };
+      return colors[qMax(0, ordinal) % 6];
+      }
+
+static QIcon staffSwatch(int ordinal, bool allTracks = false)
+      {
+      QPixmap pixmap(18, 14);
+      pixmap.fill(Qt::transparent);
+      QPainter painter(&pixmap);
+      painter.setRenderHint(QPainter::Antialiasing, true);
+      if (allTracks) {
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(editorStaffColor(0));
+            painter.drawRoundedRect(QRectF(1, 2, 8, 10), 2, 2);
+            painter.setBrush(editorStaffColor(1));
+            painter.drawRoundedRect(QRectF(9, 2, 8, 10), 2, 2);
+            }
+      else {
+            painter.setPen(QPen(editorStaffColor(ordinal).darker(135), 1));
+            painter.setBrush(editorStaffColor(ordinal));
+            painter.drawRoundedRect(QRectF(2, 2, 14, 10), 2, 2);
+            }
+      return QIcon(pixmap);
+      }
+
+static QToolButton* makeToolButton(QWidget* parent, const QString& text,
+                                   const QString& icon, const QString& tooltip)
+      {
+      QToolButton* button = new QToolButton(parent);
+      button->setText(text);
+      if (!icon.isEmpty())
+            button->setIcon(QIcon(icon));
+      button->setToolTip(tooltip);
+      button->setCheckable(true);
+      button->setToolButtonStyle(icon.isEmpty() ? Qt::ToolButtonTextOnly
+                                                 : Qt::ToolButtonIconOnly);
+      return button;
+      }
 
 PianorollEditor::PianorollEditor(QWidget* parent)
    : QMainWindow(parent)
       {
-      setObjectName("Pianoroll");
-      setWindowTitle(QString("MuseScore"));
-
-      waveView = 0;
-      _score   = 0;
-      staff    = 0;
-
-
-      QActionGroup* ag = Shortcut::getActionGroupForWidget(MsWidget::PIANO_ROLL_EDITOR);
-      ag->setParent(this);
-      addActions(ag->actions());
-      connect(ag, SIGNAL(triggered(QAction*)), this, SLOT(handleAction(QAction*)));
-
-      noteTweakerDlg = new NoteTweakerDialog(this);
-
-
-      QWidget* mainWidget = new QWidget;
-      QToolBar* tbMain = addToolBar("Toolbar Main");
-      if (qApp->layoutDirection() == Qt::LayoutDirection::LeftToRight) {
-            tbMain->addAction(getAction("undo"));
-            tbMain->addAction(getAction("redo"));
-            }
-      else {
-            tbMain->addAction(getAction("redo"));
-            tbMain->addAction(getAction("undo"));
-            }
-      tbMain->addSeparator();
-#ifdef HAS_MIDI
-      tbMain->addAction(getAction("midi-on"));
-#endif
-      tbMain->addSeparator();
-
-      tbMain->addAction(getAction("rewind"));
-      tbMain->addAction(getAction("play"));
-      tbMain->addSeparator();
-
-      tbMain->addAction(getAction("loop"));
-      tbMain->addSeparator();
-      tbMain->addAction(getAction("repeat"));
-      QAction* followAction = getAction("follow");
-      followAction->setChecked(preferences.getBool(PREF_APP_PLAYBACK_FOLLOWSONG));
-      tbMain->addAction(followAction);
-      tbMain->addSeparator();
-      tbMain->addAction(getAction("metronome"));
-
-      showWave = new QAction(tr("Wave"), tbMain);
-      showWave->setToolTip(tr("Show wave display"));
-      showWave->setCheckable(true);
-      showWave->setChecked(false);
-      connect(showWave, SIGNAL(toggled(bool)), SLOT(showWaveView(bool)));
-      tbMain->addAction(showWave);
-
-      tbMain->addSeparator();
-
-      partLabel = new QLabel(tr("Part:"));
-      tbMain->addWidget(partLabel);
-
-      // --------------------------------------------------
-      // toolbars
-
-
-      //----
-
-      QToolBar* tbTool = addToolBar("Action Buttons");
-      QButtonGroup* bngrpActionBns = new QButtonGroup();
-
-
-      struct ToolIconData
-      {
-            QString _icon;
-            QString _tooltip;
-            PianoRollEditTool _tool;
-            bool _selected;
-            };
-      ToolIconData _iconDataTool[] = {
-            { QStringLiteral(":/data/icons/preEdit-select.svg"), tr("Select Notes"), PianoRollEditTool::SELECT, false },
-            { QStringLiteral(":/data/icons/preEdit-insertNote.svg"), tr("Add Note"), PianoRollEditTool::ADD, false },
-            //{ QStringLiteral(":/data/icons/preEdit-appendChord.svg"), tr("Append Note to Chord"), PianoRollEditTool::APPEND_NOTE, false },
-            { QStringLiteral(":/data/icons/preEdit-cutNote.svg"), tr("Cut Chord"), PianoRollEditTool::CUT, false },
-            { QStringLiteral(":/data/icons/preEdit-eraseNote.svg"), tr("Erase Note"), PianoRollEditTool::ERASE, false },
-            { QStringLiteral(":/data/icons/preEdit-changeLength.svg"), tr("Change Playback Length"), PianoRollEditTool::EVENT_ADJUST, true },
-            { QStringLiteral(":/data/icons/preEdit-tie.svg"), tr("Toggle Tie"), PianoRollEditTool::TIE, false },
-            { "", "", PianoRollEditTool::LAST, false },
-            };
-
-      for (ToolIconData* p = _iconDataTool; p->_tool != PianoRollEditTool::LAST; ++p) {
-            QToolButton* bn = new QToolButton();
-            QIcon icon;
-            icon.addFile(p->_icon, QSize(), QIcon::Normal, QIcon::Off);
-            bn->setIcon(icon);
-            bn->setCheckable(true);
-            bn->setToolTip(p->_tooltip);
-            PianoRollEditTool tool = p->_tool;
-            connect(bn, &QToolButton::clicked, this, [=, this]() {this->setEditNoteTool(tool); });
-
-            if (p->_selected)
-                  bn->setChecked(true);
-            bngrpActionBns->addButton(bn);
-            tbTool->addWidget(bn);
-            }
-
-      //----
-
-      struct LenIconData
-      {
-            QString _icon;
-            int _measureFrac;  //Note length is 2^n of a measure
-            bool _selected;
-      };
-
-      LenIconData _iconData[] = {
-            { QStringLiteral(":/data/icons/note-longa.svg"), 2, false },
-            { QStringLiteral(":/data/icons/note-breve.svg"), 1, false },
-            { QStringLiteral(":/data/icons/note-1.svg"), 0, true },
-            { QStringLiteral(":/data/icons/note-2.svg"), -1, false },
-            { QStringLiteral(":/data/icons/note-4.svg"), -2, false },
-            { QStringLiteral(":/data/icons/note-8.svg"), -3, false },
-            { QStringLiteral(":/data/icons/note-16.svg"), -4, false },
-            { QStringLiteral(":/data/icons/note-32.svg"), -5, false },
-            { QStringLiteral(":/data/icons/note-64.svg"), -6, false },
-            { QStringLiteral(":/data/icons/note-128.svg"), -7, false },
-            { QStringLiteral(":/data/icons/note-256.svg"), -8, false },
-            { QStringLiteral(":/data/icons/note-512.svg"), -9, false },
-            { QStringLiteral(":/data/icons/note-1024.svg"), -10, false },
-            { "", 0, false },
-            };
-
-      QToolBar* tbNoteLen = addToolBar("Toolbar Note Length");
-      QButtonGroup* bngrpNoteLen = new QButtonGroup();
-
-      for (LenIconData* p = _iconData; !p->_icon.isEmpty(); ++p) {
-            QToolButton* bnLen = new QToolButton();
-            QIcon icon;
-            icon.addFile(p->_icon, QSize(), QIcon::Normal, QIcon::Off);
-            bnLen->setIcon(icon);
-            bnLen->setCheckable(true);
-            int length = p->_measureFrac;
-            connect(bnLen, &QToolButton::clicked, this, [=, this](){this->setEditNoteLength(length);});
-
-            if (p->_selected)
-                  bnLen->setChecked(true);
-            bngrpNoteLen->addButton(bnLen);
-            tbNoteLen->addWidget(bnLen);
-            }
-
-      //----
-
-      QToolBar* tbDots = addToolBar("Toolbar Dots");
-      QButtonGroup* bngrpNoteDot = new QButtonGroup();
-
-      struct DotIconData
-      {
-            QString _icon;
-            int _len;
-            bool _selected;
-      };
-      DotIconData _iconDotData[] = {
-            { QStringLiteral(":/data/icons/note-dot.svg"), 1, false },
-            { QStringLiteral(":/data/icons/note-double-dot.svg"), 2, false },
-            { QStringLiteral(":/data/icons/note-dot3.svg"), 3, false },
-            { QStringLiteral(":/data/icons/note-dot4.svg"), 4, false },
-            { "", -1, false },
-            };
-
-
-      for (DotIconData* p = _iconDotData; p->_len != -1; ++p) {
-            QToolButton* bn = new QToolButton();
-            QIcon icon;
-            icon.addFile(p->_icon, QSize(), QIcon::Normal, QIcon::Off);
-            bn->setIcon(icon);
-            bn->setCheckable(true);
-            int length = p->_len;
-            connect(bn, &QToolButton::clicked, this, [=, this](){this->setEditNoteDots(length, bn);});
-
-            if (p->_selected)
-                  bn->setChecked(true);
-            bngrpNoteDot->addButton(bn);
-            tbDots->addWidget(bn);
-            }
-
-
-      //----
-
-      QToolBar* tbVoices = addToolBar("Toolbar Voices");
-      QButtonGroup* bngrpVoices = new QButtonGroup();
-      //bngrpNoteLen = new QButtonGroup();
-
-      struct VoiceIconData
-      {
-            QString _icon;
-            QString _tooltip;
-            int _voice;
-            bool _selected;
-      };
-      VoiceIconData _iconDataVoice[] = {
-            { QStringLiteral(":/data/icons/voice-1.svg"), tr("Voice 1"), 0, true },
-            { QStringLiteral(":/data/icons/voice-2.svg"), tr("Voice 2"), 1, false },
-            { QStringLiteral(":/data/icons/voice-3.svg"), tr("Voice 3"), 2, false },
-            { QStringLiteral(":/data/icons/voice-4.svg"), tr("Voice 4"), 3, false },
-            { "", "", -1, false },
-            };
-
-      for (VoiceIconData* p = _iconDataVoice; p->_voice != -1; ++p) {
-            QToolButton* bn = new QToolButton();
-            QIcon icon;
-            icon.addFile(p->_icon, QSize(), QIcon::Normal, QIcon::Off);
-            bn->setIcon(icon);
-            bn->setCheckable(true);
-            bn->setToolTip(p->_tooltip);
-            int voice = p->_voice;
-            connect(bn, &QToolButton::clicked, this, [=, this](){this->setEditNoteVoice(voice);});
-
-            if (p->_selected)
-                  bn->setChecked(true);
-            bngrpVoices->addButton(bn);
-            tbVoices->addWidget(bn);
-            }
-
-      // --------------------------------------------------
-      // empty area for spacing
-
-      addToolBarBreak();
-      QToolBar* tbTweak = addToolBar("Toolbar Tweak");
-
-      tbTweak->addWidget(new QLabel(tr("Cursor:")));
-      pos = new Awl::PosLabel;
-      pos->setFrameStyle(static_cast<int>(QFrame::NoFrame) | static_cast<int>(QFrame::Plain));
-
-      tbTweak->addWidget(pos);
-      Awl::PitchLabel* pl = new Awl::PitchLabel();
-      pl->setFrameStyle(static_cast<int>(QFrame::NoFrame) | static_cast<int>(QFrame::Plain));
-      tbTweak->addWidget(pl);
-
-      tbTweak->addSeparator();
-
-      tbTweak->addWidget(new QLabel(tr("Subdiv.:")));
-      subdiv = new QSpinBox;
-      subdiv->setToolTip(tr("Subdivide the beat this many times"));
-      subdiv->setMinimum(0);
-      subdiv->setValue(0);
-      tbTweak->addWidget(subdiv);
-
-      tbTweak->addWidget(new QLabel(tr("Tuplet:")));
-      tuplet = new QSpinBox;
-      tuplet->setToolTip(tr("Edit notes aligned to tuplets of this many beats"));
-      tuplet->setMinimum(1);
-      tuplet->setValue(1);
-      tbTweak->addWidget(tuplet);
-
-      tbTweak->addWidget(new QLabel(tr("Stripe Pattern:")));
-      barPattern = new QComboBox;
-      barPattern->setToolTip(tr("White stripes show the tones of this chord."));
-      for (int i = 0; !PianoView::barPatterns[i].name.isEmpty(); ++i) {
-            barPattern->addItem(qApp->translate("BarPattern", PianoView::barPatterns[i].name.toUtf8().data()), i);
-            }
-      tbTweak->addWidget(barPattern);
-
-      tbTweak->addSeparator();
-      tbTweak->addWidget(new QLabel(tr("Velocity:")));
-      veloType = new QComboBox;
-      veloType->addItem(tr("Offset"), int(Note::ValueType::OFFSET_VAL));
-      veloType->addItem(tr("User"),   int (Note::ValueType::USER_VAL));
-      tbTweak->addWidget(veloType);
-
-      velocity = new QSpinBox;
-      velocity->setRange(-1000, 1000);
-      velocity->setReadOnly(true);
-      tbTweak->addWidget(velocity);
-
-      tbTweak->addWidget(new QLabel(tr("Pitch:")));
-      pitch = new Awl::PitchEdit;
-      pitch->setReadOnly(true);
-      tbTweak->addWidget(pitch);
-
-      tbTweak->addWidget(new QLabel(tr("OnTime:")));
-      tbTweak->addWidget((onTime = new QSpinBox));
-      onTime->setRange(-2000, 2000);
-
-      tbTweak->addWidget(new QLabel(tr("Len:")));
-      tbTweak->addWidget((tickLen = new QSpinBox));
-      tickLen->setRange(-2000, 60000);
-
-
-      // --------------------------------------------------
-      // empty area for spacing
-
-      QWidget* topLeftSpacer = new QWidget;
-      topLeftSpacer->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-      topLeftSpacer->setFixedWidth(PIANO_KEYBOARD_WIDTH);
-      topLeftSpacer->setFixedHeight(pianoRulerHeight);
-
-      ruler = new PianoRuler;
-      ruler->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-      ruler->setFixedHeight(pianoRulerHeight);
-
-      pianoKbd = new PianoKeyboard;
-      pianoKbd->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-      pianoKbd->setFixedWidth(PIANO_KEYBOARD_WIDTH);
-
-      pianoView = new PianoView;
-      pianoView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-      pianoView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-
-      hsb = new QScrollBar(Qt::Horizontal);
-      connect(pianoView->horizontalScrollBar(), SIGNAL(rangeChanged(int,int)),
-            SLOT(rangeChanged(int,int)));
-
-      QWidget* noteAreaWidget = new QWidget;
-
-      QGridLayout* noteAreaLayout = new QGridLayout;
-      noteAreaLayout->setContentsMargins(0, 0, 0, 0);
-      noteAreaLayout->setSpacing(0);
-      noteAreaLayout->addWidget(topLeftSpacer, 0, 0, 1, 1);
-      noteAreaLayout->addWidget(ruler, 0, 1, 1, 1);
-      noteAreaLayout->addWidget(pianoKbd, 1, 0, 1, 1);
-      noteAreaLayout->addWidget(pianoView, 1, 1, 1, 1);
-      noteAreaLayout->addWidget(hsb, 2, 1, 1, 1);
-      noteAreaWidget->setLayout(noteAreaLayout);
-
-      // levels area
-      pianoLevelsChooser = new PianoLevelsChooser;
-      pianoLevelsChooser->setPianoView(pianoView);
-      pianoLevelsChooser->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
-      pianoLevelsChooser->setFixedWidth(PIANO_KEYBOARD_WIDTH);
-
-      pianoLevels = new PianoLevels;
-      pianoLevels->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-
-      QWidget* levelsAreaWidget = new QWidget;
-      QHBoxLayout* levelsAreaLayout = new QHBoxLayout;
-      levelsAreaLayout->setContentsMargins(0, 0, 0, 0);
-      levelsAreaLayout->setSpacing(0);
-      levelsAreaLayout->addWidget(pianoLevelsChooser);
-      levelsAreaLayout->addWidget(pianoLevels);
-      levelsAreaWidget->setLayout(levelsAreaLayout);
-
-      // layout
-      QSplitter* editAreaSplitter = new QSplitter(Qt::Vertical);
-      editAreaSplitter->addWidget(noteAreaWidget);
-      editAreaSplitter->addWidget(levelsAreaWidget);
-      editAreaSplitter->setFrameShape(QFrame::NoFrame);
-
-      editAreaSplitter->setSizes(QList<int>({300, 100}));
-
-      split = new QSplitter(Qt::Vertical);
-      split->setFrameShape(QFrame::NoFrame);
-
-      QGridLayout* layout = new QGridLayout;
-      layout->setContentsMargins(0, 0, 0, 0);
-      layout->setSpacing(0);
-      layout->setColumnMinimumWidth(0, PIANO_KEYBOARD_WIDTH);
-      layout->addWidget(editAreaSplitter, 1, 0, 1, 1);
-
-      mainWidget->setLayout(layout);
-      setCentralWidget(mainWidget);
-
-      connect(pianoView->verticalScrollBar(),   SIGNAL(valueChanged(int)), pianoKbd, SLOT(setYpos(int)));
-      connect(pianoView->horizontalScrollBar(), SIGNAL(valueChanged(int)), hsb,      SLOT(setValue(int)));
-
-      connect(pianoView,          SIGNAL(xZoomChanged(qreal)),            ruler,       SLOT(setXZoom(qreal)));
-      connect(pianoView,          SIGNAL(xZoomChanged(qreal)),            pianoLevels, SLOT(setXZoom(qreal)));
-      connect(pianoView,          SIGNAL(noteHeightChanged(int)),         pianoKbd,    SLOT(setNoteHeight(int)));
-      connect(pianoView,          SIGNAL(pitchChanged(int)),              pl,          SLOT(setPitch(int)));
-      connect(pianoView,          SIGNAL(pitchChanged(int)),              pianoKbd,    SLOT(setPitch(int)));
-      connect(pianoKbd,           SIGNAL(pitchChanged(int)),              pl,          SLOT(setPitch(int)));
-      connect(pianoView,          SIGNAL(trackingPosChanged(Pos&)),       pos,         SLOT(setValue(Pos&)));
-      connect(pianoView,          SIGNAL(trackingPosChanged(Pos&)),       ruler,       SLOT(setPos(Pos&)));
-      connect(pianoView,          SIGNAL(trackingPosChanged(Pos&)),       pianoLevels, SLOT(setPos(Pos&)));
-      connect(ruler,              SIGNAL(posChanged(Pos&)),               pos,         SLOT(setValue(Pos&)));
-      connect(pianoLevels,        SIGNAL(posChanged(Pos&)),               pos,         SLOT(setValue(Pos&)));
-      connect(tuplet,             SIGNAL(valueChanged(int)),              pianoView,   SLOT(setTuplet(int)));
-      connect(tuplet,             SIGNAL(valueChanged(int)),              pianoLevels, SLOT(setTuplet(int)));
-      connect(barPattern,         SIGNAL(activated(int)),                 pianoView,   SLOT(setBarPattern(int)));
-      connect(subdiv,             SIGNAL(valueChanged(int)),              pianoView,   SLOT(setSubdiv(int)));
-      connect(subdiv,             SIGNAL(valueChanged(int)),              pianoLevels, SLOT(setSubdiv(int)));
-      connect(pianoLevelsChooser, SIGNAL(levelsIndexChanged(int)),        pianoLevels, SLOT(setLevelsIndex(int)));
-      connect(pianoKbd,           SIGNAL(pitchHighlightToggled(int)),     pianoView,   SLOT(togglePitchHighlight(int)));
-
-      connect(hsb,                              SIGNAL(valueChanged(int)),   SLOT(setXpos(int)));
-      connect(pianoView->horizontalScrollBar(), SIGNAL(valueChanged(int)),   SLOT(setXpos(int)));
-
-      connect(ruler,              SIGNAL(locatorMoved(int,Pos&)),        SLOT(moveLocator(int,Pos&)));
-      connect(pianoLevels,        SIGNAL(locatorMoved(int,Pos&)),        SLOT(moveLocator(int,Pos&)));
-      connect(veloType,           SIGNAL(activated(int)),                SLOT(veloTypeChanged(int)));
-      connect(velocity,           SIGNAL(valueChanged(int)),             SLOT(velocityChanged(int)));
-      connect(onTime,             SIGNAL(valueChanged(int)),             SLOT(onTimeChanged(int)));
-      connect(tickLen,            SIGNAL(valueChanged(int)),             SLOT(tickLenChanged(int)));
-      connect(pianoView,          SIGNAL(selectionChanged()),            SLOT(selectionChanged()));
-      connect(pianoView,          SIGNAL(showNoteTweakerRequest()),      SLOT(showNoteTweaker()));
-      connect(pianoKbd,           SIGNAL(keyPressed(int)),               SLOT(keyPressed(int)));
-      connect(pianoKbd,           SIGNAL(keyReleased(int)),              SLOT(keyReleased(int)));
-      connect(pianoLevels,        SIGNAL(noteLevelsChanged()),           SLOT(selectionChanged()));
-      connect(noteTweakerDlg,     SIGNAL(notesChanged()),                SLOT(selectionChanged()));
-      connect(pianoLevelsChooser, SIGNAL(notesChanged()),                SLOT(selectionChanged()));
-
+      _score = nullptr;
+      setObjectName(QStringLiteral("Pianoroll"));
+      setWindowTitle(tr("Key Editor"));
+      setMinimumSize(760, 480);
+      resize(1180, 720);
+      setAttribute(Qt::WA_DeleteOnClose, false);
+
+      _model = new KeyEditorModel(this);
+      _view = new KeyEditorView(this);
+      _view->setModel(_model);
+      buildUi();
+
+      QActionGroup* shortcuts = Shortcut::getActionGroupForWidget(MsWidget::PIANO_ROLL_EDITOR);
+      shortcuts->setParent(this);
+      addActions(shortcuts->actions());
+      connect(shortcuts, &QActionGroup::triggered, this, &PianorollEditor::handleAction);
+
+      connect(_model, &KeyEditorModel::selectionChanged,
+              this, &PianorollEditor::selectionChanged);
+      connect(_view, &KeyEditorView::cursorChanged,
+              this, &PianorollEditor::cursorChanged);
+      connect(_view, &KeyEditorView::seekRequested,
+              this, &PianorollEditor::seekToTick);
+      connect(_view, &KeyEditorView::pitchPressed,
+              this, &PianorollEditor::pitchPressed);
+      connect(_view, &KeyEditorView::pitchReleased,
+              this, &PianorollEditor::pitchReleased);
+      connect(_view, &KeyEditorView::notePreviewReleased, this, []() {
+            if (seq)
+                  seq->stopNoteTimer();
+            });
+      connect(_view, &KeyEditorView::togglePlaybackRequested, this, []() {
+            if (QAction* play = getAction("play")) {
+                  if (play->isEnabled())
+                        play->trigger();
+                  }
+            });
+      connect(_view, &KeyEditorView::noteFocusRequested, this, [this](Note* note) {
+            _selectionFromPianoRoll = true;
+            focusScoreOnNote(note);
+            QTimer::singleShot(0, this, [this]() { _selectionFromPianoRoll = false; });
+            });
+      connect(_view, &KeyEditorView::pianoRollSelectionStarted, this, [this]() {
+            // Marquee selection originates in this editor.  Score selection
+            // notifications must not recenter the view that created them.
+            _selectionFromPianoRoll = true;
+            QTimer::singleShot(0, this, [this]() { _selectionFromPianoRoll = false; });
+            });
+      connect(_view, &KeyEditorView::editToolRequested, this,
+              [this](KeyEditorView::EditTool tool) {
+                    if (QAbstractButton* button = _editToolGroup->button(int(tool)))
+                          button->setChecked(true);
+                    });
+      connect(_view, &KeyEditorView::laneModeRequested, this,
+              [this](KeyEditorView::LaneMode mode) {
+                    const int index = _laneSelector->findData(int(mode));
+                    if (index >= 0)
+                          _laneSelector->setCurrentIndex(index);
+                    });
+      connect(_view, &KeyEditorView::laneToolRequested, this,
+              [this](KeyEditorView::LaneTool tool) {
+                    const int index = _laneToolSelector->findData(int(tool));
+                    if (index >= 0)
+                          _laneToolSelector->setCurrentIndex(index);
+                    });
       readSettings();
-
-      actions.append(getAction("tie"));
-      actions.append(getAction("play"));
-      actions.append(getAction("delete"));
-      actions.append(getAction("pitch-up"));
-      actions.append(getAction("pitch-down"));
-      actions.append(getAction("pitch-up-octave"));
-      actions.append(getAction("pitch-down-octave"));
-
-//      QMenu* popup = new QMenu(this);
-//      popup->setSeparatorsCollapsible(false);
-//      QAction* a = popup->addSeparator();
-//      popup->addAction(getAction("cut"));
-//      popup->addAction(getAction("copy"));
-//      popup->addAction(getAction("paste"));
-//      popup->addAction(getAction("swap"));
-//      popup->addAction(getAction("delete"));
-
-      addActions(actions);
-      for (auto*& action : actions)
-            connect(action, &QAction::triggered, this, [this, action](bool){ cmd(action); });
-
-      setXpos(0);
+      centralWidget()->setEnabled(false);
       }
-
-
-//---------------------------------------------------------
-//   ~PianorollEditor
-//---------------------------------------------------------
 
 PianorollEditor::~PianorollEditor()
       {
-      if (_score)
+      detachScore(true);
+      }
+
+void PianorollEditor::buildUi()
+      {
+      QToolBar* editBar = addToolBar(tr("Key Editor Tools"));
+      editBar->setObjectName(QStringLiteral("KeyEditorTools"));
+      editBar->setMovable(false);
+      editBar->setFloatable(false);
+      editBar->setIconSize(QSize(18, 18));
+      if (mscore) {
+            if (qApp->layoutDirection() == Qt::LeftToRight) {
+                  editBar->addAction(getAction("undo"));
+                  editBar->addAction(getAction("redo"));
+                  }
+            else {
+                  editBar->addAction(getAction("redo"));
+                  editBar->addAction(getAction("undo"));
+                  }
+            editBar->addSeparator();
+            editBar->addAction(getAction("rewind"));
+            if (QAction* play = getAction("play")) {
+                  // ScoreTab narrows this shared action to its own child tree.
+                  // Restore its original window scope for the separate Key
+                  // Editor window so Space works regardless of focused control.
+                  play->setShortcutContext(Qt::WindowShortcut);
+                  editBar->addAction(play);
+                  }
+            editBar->addSeparator();
+            }
+
+      _editToolGroup = new QButtonGroup(this);
+      _editToolGroup->setExclusive(true);
+      QToolButton* select = makeToolButton(editBar, tr("Select"),
+            QStringLiteral(":/data/icons/preEdit-select.svg"),
+            tr("Select and edit notes. Drag edges to resize; Alt-drag duplicates."));
+      QToolButton* draw = makeToolButton(editBar, tr("Draw"),
+            QStringLiteral(":/data/icons/preEdit-appendChord.svg"),
+            tr("Draw notes. Double-clicking empty space also inserts a note."));
+      QToolButton* erase = makeToolButton(editBar, tr("Erase"),
+            QStringLiteral(":/data/icons/preEdit-eraseNote.svg"), tr("Delete notes"));
+      _editToolGroup->addButton(select, int(KeyEditorView::EditTool::Select));
+      _editToolGroup->addButton(draw, int(KeyEditorView::EditTool::Draw));
+      _editToolGroup->addButton(erase, int(KeyEditorView::EditTool::Erase));
+      select->setChecked(true);
+      editBar->addWidget(select);
+      editBar->addWidget(draw);
+      editBar->addWidget(erase);
+      connect(_editToolGroup, QOverload<int>::of(&QButtonGroup::buttonClicked),
+              this, &PianorollEditor::editToolChanged);
+
+      editBar->addSeparator();
+      _snapButton = new QToolButton(editBar);
+      _snapButton->setText(tr("Snap"));
+      _snapButton->setCheckable(true);
+      _snapButton->setChecked(true);
+      _snapButton->setToolTip(tr("Snap to the grid. Hold Shift while dragging for free adjustment."));
+      editBar->addWidget(_snapButton);
+      connect(_snapButton, &QToolButton::toggled, _view, &KeyEditorView::setSnapEnabled);
+
+      _gridSelector = new QComboBox(editBar);
+      _gridSelector->setToolTip(tr("Grid and quantize resolution"));
+      _gridSelector->addItem(tr("1/4"), 480);
+      _gridSelector->addItem(tr("1/8"), 240);
+      _gridSelector->addItem(tr("1/8 dotted"), 360);
+      _gridSelector->addItem(tr("1/8 triplet"), 160);
+      _gridSelector->addItem(tr("1/16"), 120);
+      _gridSelector->addItem(tr("1/16 triplet"), 80);
+      _gridSelector->addItem(tr("1/32"), 60);
+      _gridSelector->addItem(tr("1/64"), 30);
+      _gridSelector->setCurrentIndex(4);
+      editBar->addWidget(_gridSelector);
+      connect(_gridSelector, QOverload<int>::of(&QComboBox::currentIndexChanged),
+              this, &PianorollEditor::gridChanged);
+
+      QPushButton* quantize = new QPushButton(tr("Quantize"), editBar);
+      quantize->setToolTip(tr("Quantize selected note starts to the current grid (Q)"));
+      editBar->addWidget(quantize);
+      connect(quantize, &QPushButton::clicked, this, [this]() {
+            QVector<KeyEditorModel::NoteEdit> edits = selectedEdits();
+            const int grid = selectedGridTicks();
+            for (KeyEditorModel::NoteEdit& edit : edits) {
+                  const int duration = edit.endTick - edit.startTick;
+                  edit.startTick = qMax(0, int(std::floor((edit.startTick + grid / 2.0) / grid)) * grid);
+                  edit.endTick = edit.startTick + duration;
+                  }
+            applySelectedEdits(edits);
+            });
+
+      _followButton = new QToolButton(editBar);
+      _followButton->setText(tr("Follow"));
+      _followButton->setCheckable(true);
+      _followButton->setChecked(preferences.getBool(PREF_APP_PLAYBACK_FOLLOWSONG));
+      _followButton->setToolTip(tr("Keep the playback cursor visible"));
+      editBar->addWidget(_followButton);
+
+      QToolBar* contextBar = addToolBar(tr("Key Editor Context"));
+      contextBar->setObjectName(QStringLiteral("KeyEditorContext"));
+      contextBar->setMovable(false);
+      contextBar->setFloatable(false);
+      contextBar->addWidget(new QLabel(tr("Track"), contextBar));
+      _trackSelector = new QComboBox(contextBar);
+      _trackSelector->setMinimumContentsLength(13);
+      _trackSelector->setToolTip(tr("Show one staff or all staves in the part"));
+      contextBar->addWidget(_trackSelector);
+      connect(_trackSelector, QOverload<int>::of(&QComboBox::currentIndexChanged),
+              this, &PianorollEditor::trackChanged);
+
+      _editTargetLabel = new QLabel(tr("Draw into"), contextBar);
+      contextBar->addWidget(_editTargetLabel);
+      _editTargetSelector = new QComboBox(contextBar);
+      _editTargetSelector->setToolTip(tr("Staff used for new notes and pedal spans in All Tracks mode"));
+      contextBar->addWidget(_editTargetSelector);
+      connect(_editTargetSelector, QOverload<int>::of(&QComboBox::currentIndexChanged),
+              this, &PianorollEditor::editTargetChanged);
+
+      _laneSelector = new QComboBox(_view->viewport());
+      _laneSelector->addItem(tr("Velocity"), int(KeyEditorView::LaneMode::Velocity));
+      _laneSelector->addItem(tr("Sustain (CC64)"), int(KeyEditorView::LaneMode::Sustain));
+      _laneSelector->addItem(tr("Tempo Map"), int(KeyEditorView::LaneMode::Tempo));
+      _laneSelector->setToolTip(tr("Controller lane"));
+      connect(_laneSelector, QOverload<int>::of(&QComboBox::currentIndexChanged),
+              this, &PianorollEditor::laneChanged);
+      _laneToolSelector = new QComboBox(_view->viewport());
+      _laneToolSelector->setToolTip(tr("Controller editing tool"));
+      connect(_laneToolSelector, QOverload<int>::of(&QComboBox::currentIndexChanged),
+              this, &PianorollEditor::laneToolChanged);
+
+      _view->setLaneControls(_laneSelector, _laneToolSelector);
+      laneChanged(0);
+
+      QWidget* selectionSpacer = new QWidget(contextBar);
+      selectionSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+      contextBar->addWidget(selectionSpacer);
+      _selectionSummary = new QLabel(tr("No selection"), contextBar);
+      _selectionSummary->setMinimumWidth(125);
+      contextBar->addWidget(_selectionSummary);
+
+      auto addField = [contextBar](const QString& label, QSpinBox*& field, int minimum, int maximum) {
+            contextBar->addWidget(new QLabel(label, contextBar));
+            field = new QSpinBox(contextBar);
+            field->setRange(minimum, maximum);
+            field->setKeyboardTracking(false);
+            field->setFixedWidth(88);
+            contextBar->addWidget(field);
+            };
+      addField(tr("Velocity"), _velocityField, 1, 127);
+      addField(tr("OnTime"), _onTimeField, -2000, 2000);
+      addField(tr("Length"), _eventLengthField, 1, 60000);
+      connect(_velocityField, &QSpinBox::editingFinished, this, &PianorollEditor::commitVelocity);
+      connect(_onTimeField, &QSpinBox::editingFinished,
+              this, &PianorollEditor::commitOnTime);
+      connect(_eventLengthField, &QSpinBox::editingFinished,
+              this, &PianorollEditor::commitEventLength);
+      connect(_velocityField, QOverload<int>::of(&QSpinBox::valueChanged),
+              this, [this](int) { _velocityDirty = true; });
+      connect(_onTimeField, QOverload<int>::of(&QSpinBox::valueChanged),
+              this, [this](int) { _onTimeDirty = true; });
+      connect(_eventLengthField, QOverload<int>::of(&QSpinBox::valueChanged),
+              this, [this](int) { _eventLengthDirty = true; });
+
+      QWidget* central = new QWidget(this);
+      QVBoxLayout* layout = new QVBoxLayout(central);
+      layout->setContentsMargins(0, 0, 0, 0);
+      layout->setSpacing(0);
+      layout->addWidget(_view);
+      setCentralWidget(central);
+
+      _cursorSummary = new QLabel(tr("Tick 0  ·  C4"), this);
+      statusBar()->addPermanentWidget(_cursorSummary);
+      statusBar()->showMessage(tr("Space: play/pause   Shift: free adjustment   Ctrl: constrain/fine nudge   Alt: duplicate   Middle drag: pan"));
+      updateSelectionFields();
+      }
+
+void PianorollEditor::detachScore(bool removeViewer)
+      {
+      pitchReleased(-1);
+      if (!_score)
+            return;
+      disconnect(_score, nullptr, this, nullptr);
+      if (removeViewer)
             _score->removeViewer(this);
-      for (auto*& action : actions)
-            action->disconnect(this);
+      _score = nullptr;
       }
 
-//---------------------------------------------------------
-//   setEditNoteLength
-//---------------------------------------------------------
-
-void PianorollEditor::setEditNoteLength(int len)
+void PianorollEditor::attachScore(Score* score)
       {
-            pianoView->setEditNoteLength(Fraction::fromTicks(pow(2, len + 2) * DIVISION));
-      }
-
-//---------------------------------------------------------
-//   setEditNoteVoice
-//---------------------------------------------------------
-
-void PianorollEditor:: setEditNoteVoice(int voice)
-      {
-            pianoView->setEditNoteVoice(voice);
-      }
-
-//---------------------------------------------------------
-//   setEditNoteDots
-//---------------------------------------------------------
-
-void PianorollEditor::setEditNoteDots(int value, QToolButton* bn)
-      {
-      if (pianoView->editNoteDots() == value) {
-            bn->group()->setExclusive(false);
-            bn->setChecked(false);
-            bn->group()->setExclusive(true);
-            pianoView->setEditNoteDots(0);
+      if (_score == score)
+            return;
+      detachScore(true);
+      _score = score;
+      if (!_score)
+            return;
+      _score->addViewer(this);
+      connect(_score, SIGNAL(posChanged(POS,uint)), this, SLOT(scorePositionChanged(POS,uint)));
+      connect(_score, SIGNAL(playlistChanged()), this, SLOT(playlistChanged()));
+      for (int i = 0; i < 3; ++i) {
+            _locators[i].setContext(_score->tempomap(), _score->sigmap());
+            _locators[i].setTick(_score->pos(POS(i)).ticks());
+            _view->setLocator(i, _locators[i].tick());
             }
+      }
+
+void PianorollEditor::setScore(Score* score)
+      {
+      if (_score == score)
+            return;
+      _staff = nullptr;
+      _partStaves.clear();
+      _model->clear();
+      centralWidget()->setEnabled(false);
+      attachScore(score);
+      }
+
+void PianorollEditor::rebuildScopeSelectors(Staff* initialStaff)
+      {
+      QSignalBlocker trackBlocker(_trackSelector);
+      QSignalBlocker targetBlocker(_editTargetSelector);
+      _trackSelector->clear();
+      _editTargetSelector->clear();
+      _partStaves.clear();
+      if (!initialStaff || !initialStaff->part())
+            return;
+      const QList<Staff*>* staves = initialStaff->part()->staves();
+      if (staves)
+            _partStaves = *staves;
+      if (_partStaves.size() > 1)
+            _trackSelector->addItem(staffSwatch(0, true), tr("All Tracks"), -1);
+      int selectedTarget = 0;
+      for (int i = 0; i < _partStaves.size(); ++i) {
+            Staff* staff = _partStaves[i];
+            QString label;
+            if (_partStaves.size() == 2)
+                  label = i == 0 ? tr("Staff 1 · Upper") : tr("Staff 2 · Lower");
+            else
+                  label = tr("Staff %1").arg(i + 1);
+            _trackSelector->addItem(staffSwatch(i), label, staff->idx());
+            _editTargetSelector->addItem(staffSwatch(i), label, staff->idx());
+            if (staff == initialStaff)
+                  selectedTarget = i;
+            }
+      _editTargetSelector->setCurrentIndex(selectedTarget);
+      if (_partStaves.size() > 1)
+            _trackSelector->setCurrentIndex(0);
       else
-            pianoView->setEditNoteDots(value);
+            _trackSelector->setCurrentIndex(qMax(0, selectedTarget));
       }
 
-//---------------------------------------------------------
-//   setEditNoteTool
-//---------------------------------------------------------
-
-void PianorollEditor::setEditNoteTool(PianoRollEditTool value)
+void PianorollEditor::setStaff(Staff* staff)
       {
-      pianoView->setEditNoteTool(value);
-      }
-
-//---------------------------------------------------------
-//   handleAction
-//---------------------------------------------------------
-
-void PianorollEditor::handleAction(QAction* a)
-      {
-      QString cmd(a->data().toString());
-
-      if (cmd == "zoom-in-horiz-pre")
-            zoom(1, true);
-      else if (cmd == "zoom-out-horiz-pre")
-            zoom(-1, true);
-      else if (cmd == "zoom-in-vert-pre")
-            zoom(1, false);
-      else if (cmd == "zoom-out-vert-pre")
-            zoom(-1, false);
-      }
-
-
-//---------------------------------------------------------
-//   showNoteTweaker
-//---------------------------------------------------------
-
-void PianorollEditor::showNoteTweaker()
-      {
-      noteTweakerDlg->show();
-      }
-
-//---------------------------------------------------------
-//   focusOnPosition
-//---------------------------------------------------------
-
-void PianorollEditor::focusOnPosition(Position* p)
-      {
-      if (!p || !p->segment)
-            return;
-
-      // move view so that view is centered on this element
-      pianoView->ensureVisible(p->segment->tick().ticks());
-      }
-
-//---------------------------------------------------------
-//   setStaff
-//---------------------------------------------------------
-
-void PianorollEditor::setStaff(Staff* st)
-      {
-      if (staff == st)
-            return;
-
-      if (st)
-            partLabel->setText(tr("Part: %1").arg(st->partName()));
-
-      if ((st && st->score() != _score) || (!st && _score)) {
-            if (_score) {
-                  _score->removeViewer(this);
-                  disconnect(_score, SIGNAL(posChanged(POS,unsigned)), this, SLOT(posChanged(POS,unsigned)));
-                  disconnect(_score, SIGNAL(playlistChanged()), this, SLOT(playlistChanged()));
-                  }
-            _score = st ? st->score() : nullptr;
-            if (_score) {
-                  _score->addViewer(this);
-                  setLocator(POS::CURRENT, _score->pos(POS::CURRENT).ticks());
-                  setLocator(POS::LEFT,    _score->pos(POS::LEFT).ticks());
-                  setLocator(POS::RIGHT,   _score->pos(POS::RIGHT).ticks());
-                  connect(_score, SIGNAL(posChanged(POS,uint)), SLOT(posChanged(POS,uint)));
-                  connect(_score, SIGNAL(playlistChanged()), SLOT(playlistChanged()));
-                  }
-            }
-      staff = st;
+      if (staff && staff->score() != _score)
+            setScore(staff->score());
+      _staff = staff;
+      rebuildScopeSelectors(staff);
+      updateScope();
+      centralWidget()->setEnabled(staff != nullptr);
       if (staff) {
-            setWindowTitle(tr("<%1> Staff: %2").arg(_score->masterScore()->fileInfo()->completeBaseName()).arg(st->idx()));
-            TempoMap* tl = _score->tempomap();
-            TimeSigMap*  sl = _score->sigmap();
-            for (int i = 0; i < 3; ++i)
-                  locator[i].setContext(tl, sl);
-            pos->setContext(tl, sl);
-            showWave->setEnabled(_score->audio() != 0);
+            int focusPitch = 60;
+            const QList<Note*> selected = _model->selectedNotes();
+            if (!selected.isEmpty())
+                  focusPitch = selected.front()->pitch();
+            _view->ensurePitchVisible(focusPitch, true);
             }
-      else
-            setWindowTitle(tr("Piano roll editor"));
-      ruler->setScore(_score, locator);
-      pianoView->setStaff(staff, locator);
-      pianoLevels->setScore(_score, locator);
-      pianoLevels->setStaff(staff, locator);
-      pianoLevelsChooser->setStaff(staff);
-      pianoKbd->setStaff(staff);
-      noteTweakerDlg->setStaff(staff);
-
-      updateSelection();
-      setEnabled(st);
       }
 
-//---------------------------------------------------------
-//   writeSettings
-//---------------------------------------------------------
-
-void PianorollEditor::writeSettings()
+Staff* PianorollEditor::selectedEditStaff() const
       {
-      MuseScore::saveGeometry(this);
+      if (_partStaves.isEmpty())
+            return nullptr;
+      const int index = _editTargetSelector->currentIndex();
+      return index >= 0 && index < _partStaves.size() ? _partStaves[index] : _partStaves.front();
       }
 
-//---------------------------------------------------------
-//   readSettings
-//---------------------------------------------------------
-
-void PianorollEditor::readSettings()
+void PianorollEditor::updateScope()
       {
-      resize(QSize(800, 600)); // ensure default size if no geometry in settings
-      MuseScore::restoreGeometry(this);
-      }
-
-//---------------------------------------------------------
-//   setXpos
-//---------------------------------------------------------
-
-void PianorollEditor::setXpos(int x)
-      {
-      pianoView->horizontalScrollBar()->setValue(x);
-      ruler->setXpos(x);
-      pianoLevels->setXpos(x);
-      if (waveView && showWave->isChecked())
-            waveView->setXpos(x);
-      }
-
-//---------------------------------------------------------
-//   rangeChanged
-//---------------------------------------------------------
-
-void PianorollEditor::rangeChanged(int min, int max)
-      {
-      hsb->setRange(min, max);
-      }
-
-//---------------------------------------------------------
-//   updateSelection
-//---------------------------------------------------------
-
-void PianorollEditor::updateSelection()
-      {
-      QList<PianoItem*> items = pianoView->getSelectedItems();
-      bool enabled = false;
-
-      if (items.size() == 1) {
-            PianoItem* item = items[0];
-            Note* note = item->note();
-
-            pitch->setValue(note->pitch());
-
-            NoteEvent* event = item->getTweakNoteEvent();
-            if (event) {
-                  onTime->setValue(event->ontime());
-                  tickLen->setValue(event->len());
-                  }
-
-            updateVelocity(note);
+      if (!_score || _partStaves.isEmpty()) {
+            _model->clear();
+            return;
             }
-
-      // if all selected notes don't have the same veloType,
-      // velocity field should be disabled
-      bool sameVeloType = true;
-      if (items.size()) {
-            enabled = true;
-
-            Note::ValueType vt = items[0]->note()->veloType();
-            for (int i = 1; i < items.size(); i++) {
-                  if (items[i]->note()->veloType() != vt) {
-                        sameVeloType = false;
+      QList<Staff*> visible;
+      Staff* editStaff = selectedEditStaff();
+      const bool allTracks = _trackSelector->currentData().toInt() < 0;
+      if (allTracks)
+            visible = _partStaves;
+      else {
+            const int staffIdx = _trackSelector->currentData().toInt();
+            for (Staff* staff : _partStaves) {
+                  if (staff->idx() == staffIdx) {
+                        visible.append(staff);
+                        editStaff = staff;
                         break;
                         }
                   }
             }
-
-      velocity->setEnabled(enabled && sameVeloType);
-      pitch->setEnabled(enabled);
-      veloType->setEnabled(enabled);
-      onTime->setEnabled(enabled);
-      tickLen->setEnabled(enabled);
-      pianoLevelsChooser->updateSetboxValue();
+      if (!editStaff)
+            editStaff = _partStaves.front();
+      _staff = editStaff;
+      _editTargetLabel->setVisible(allTracks);
+      _editTargetSelector->setVisible(allTracks);
+      _editTargetSelector->setEnabled(allTracks);
+      _view->setEditStaffIdx(editStaff->idx());
+      _model->setContext(editStaff, visible);
+      updateWindowTitle();
+      updateSelectionFields();
       }
 
-//---------------------------------------------------------
-//   selectionChanged
-//    called if selection in PianoView changed
-//---------------------------------------------------------
+void PianorollEditor::updateWindowTitle()
+      {
+      if (!_score || !_staff) {
+            setWindowTitle(tr("Key Editor"));
+            return;
+            }
+      const QString scoreName = _score->masterScore()->fileInfo()->completeBaseName();
+      const QString scope = _trackSelector->currentData().toInt() < 0
+                          ? tr("All Tracks") : _trackSelector->currentText();
+      setWindowTitle(tr("%1 — Key Editor — %2").arg(scoreName, scope));
+      }
+
+void PianorollEditor::trackChanged(int)
+      {
+      if (_trackSelector->currentData().toInt() >= 0) {
+            const int staffIdx = _trackSelector->currentData().toInt();
+            for (int i = 0; i < _editTargetSelector->count(); ++i) {
+                  if (_editTargetSelector->itemData(i).toInt() == staffIdx) {
+                        QSignalBlocker blocker(_editTargetSelector);
+                        _editTargetSelector->setCurrentIndex(i);
+                        break;
+                        }
+                  }
+            }
+      updateScope();
+      }
+
+void PianorollEditor::editTargetChanged(int)
+      {
+      if (_trackSelector->currentData().toInt() < 0)
+            updateScope();
+      }
+
+int PianorollEditor::selectedGridTicks() const
+      {
+      return qMax(1, _gridSelector->currentData().toInt());
+      }
+
+void PianorollEditor::gridChanged(int)
+      {
+      _view->setGridTicks(selectedGridTicks());
+      }
+
+void PianorollEditor::laneChanged(int)
+      {
+      const KeyEditorView::LaneMode mode = KeyEditorView::LaneMode(_laneSelector->currentData().toInt());
+      _view->setLaneMode(mode);
+      QSignalBlocker blocker(_laneToolSelector);
+      _laneToolSelector->clear();
+      _laneToolSelector->addItem(tr("Pointer"), int(KeyEditorView::LaneTool::Pointer));
+      if (mode == KeyEditorView::LaneMode::Velocity) {
+            _laneToolSelector->addItem(tr("Freehand"), int(KeyEditorView::LaneTool::Freehand));
+            _laneToolSelector->addItem(tr("Line"), int(KeyEditorView::LaneTool::Line));
+            }
+      else if (mode == KeyEditorView::LaneMode::Sustain)
+            _laneToolSelector->addItem(tr("Draw span"), int(KeyEditorView::LaneTool::Freehand));
+      _laneToolSelector->setCurrentIndex(0);
+      _view->setLaneTool(KeyEditorView::LaneTool::Pointer);
+      }
+
+void PianorollEditor::laneToolChanged(int)
+      {
+      if (_laneToolSelector->currentIndex() >= 0)
+            _view->setLaneTool(KeyEditorView::LaneTool(_laneToolSelector->currentData().toInt()));
+      }
+
+void PianorollEditor::editToolChanged(int tool)
+      {
+      _view->setEditTool(KeyEditorView::EditTool(tool));
+      }
+
+QVector<KeyEditorModel::NoteEdit> PianorollEditor::selectedEdits() const
+      {
+      QVector<KeyEditorModel::NoteEdit> edits;
+      for (Note* note : _model->selectedNotes()) {
+            const int index = _model->noteIndex(note);
+            if (index < 0)
+                  continue;
+            const KeyEditorModel::NoteBlock& block = _model->notes()[index];
+            edits.append({ note, block.startTick, block.endTick, block.pitch,
+                           block.staffIdx, block.voice });
+            }
+      return edits;
+      }
+
+bool PianorollEditor::applySelectedEdits(const QVector<KeyEditorModel::NoteEdit>& edits)
+      {
+      return _model->applyPlaybackTimingEdits(edits);
+      }
+
+void PianorollEditor::focusScoreOnNote(Note* note)
+      {
+      if (!note || !mscore || !mscore->currentScoreView())
+            return;
+      ScoreView* scoreView = mscore->currentScoreView();
+      if (scoreView->score() == note->score())
+            scoreView->adjustCanvasPosition(note, false);
+      }
+
+void PianorollEditor::focusSelectedNoteInPianoRoll()
+      {
+      if (!_score)
+            return;
+      Note* note = nullptr;
+      Element* selected = _score->selection().element();
+      if (selected && selected->isNote())
+            note = toNote(selected);
+      if (!note) {
+            const std::vector<Note*> notes = _score->selection().noteList();
+            if (!notes.empty())
+                  note = notes.front();
+            }
+      if (!note)
+            return;
+
+      if (!_partStaves.contains(note->staff()))
+            setStaff(note->staff());
+      const int index = _model->noteIndex(note);
+      if (index < 0)
+            return;
+      const KeyEditorModel::NoteBlock& block = _model->notes()[index];
+      _view->ensureTickVisible(block.startTick, true);
+      _view->ensurePitchVisible(block.pitch, true);
+      }
+
+void PianorollEditor::updateSelectionFields()
+      {
+      const QVector<KeyEditorModel::NoteEdit> edits = selectedEdits();
+      const QList<Note*> selected = _model->selectedNotes();
+      const bool enabled = !edits.isEmpty();
+      _velocityField->setEnabled(enabled);
+      bool singleEvents = enabled;
+      for (Note* note : selected)
+            singleEvents = singleEvents && note && note->playEvents().size() == 1;
+      _onTimeField->setEnabled(singleEvents);
+      _eventLengthField->setEnabled(singleEvents);
+      const QString eventTip = singleEvents
+            ? tr("Playback event value for the selected notes")
+            : tr("Use the event lane to edit multi-event ornaments individually");
+      _onTimeField->setToolTip(eventTip);
+      _eventLengthField->setToolTip(eventTip);
+      if (!enabled) {
+            _selectionSummary->setText(tr("No selection"));
+            _velocityDirty = false;
+            _onTimeDirty = _eventLengthDirty = false;
+            return;
+            }
+
+      QSet<int> staves;
+      for (const KeyEditorModel::NoteEdit& edit : edits)
+            staves.insert(edit.staffIdx);
+      const int firstVelocity = _model->effectiveVelocity(selected.front());
+      bool mixedVelocity = false;
+      for (int i = 0; i < edits.size(); ++i) {
+            mixedVelocity = mixedVelocity
+                         || _model->effectiveVelocity(edits[i].source) != firstVelocity;
+            }
+      QSignalBlocker velocityBlock(_velocityField);
+      QSignalBlocker onTimeBlock(_onTimeField);
+      QSignalBlocker eventLengthBlock(_eventLengthField);
+      _velocityField->setValue(firstVelocity);
+      if (singleEvents) {
+            _onTimeField->setValue(selected.front()->playEvents().front().ontime());
+            _eventLengthField->setValue(selected.front()->playEvents().front().len());
+            }
+      auto setMixedDisplay = [this](QSpinBox* field, bool mixed) {
+            if (QLineEdit* editor = field->findChild<QLineEdit*>()) {
+                  editor->setPlaceholderText(mixed ? tr("Mixed") : QString());
+                  if (mixed)
+                        editor->clear();
+                  }
+            };
+      setMixedDisplay(_velocityField, mixedVelocity);
+      _selectionSummary->setText(edits.size() == 1
+            ? tr("1 note") : tr("%1 notes · %2 staffs").arg(edits.size()).arg(staves.size()));
+      _velocityDirty = false;
+      _onTimeDirty = _eventLengthDirty = false;
+      }
 
 void PianorollEditor::selectionChanged()
       {
-      QList<PianoItem*> items = pianoView->getSelectedItems();
-      if (items.size() == 1) {
-            Note* note = items[0]->note();
-            _score->select(note, SelectType::SINGLE, 0);
-            }
-      else if (items.size() == 0)
-            _score->select(0, SelectType::SINGLE, 0);
-      else {
-            _score->deselectAll();
-            for (PianoItem*& item : items) {
-                  Note* note = item->note();
-                  if (!note->selected())
-                        _score->select(note, SelectType::ADD, 0);
-                  }
-            }
-      for (MuseScoreView* view : score()->getViewer())
-            view->updateAll();
-
-      pianoView->scene()->update();
-      pianoLevels->update();
-      updateSelection();
+      updateSelectionFields();
       }
 
-//---------------------------------------------------------
-//   changeSelection
-//---------------------------------------------------------
-
-void PianorollEditor::changeSelection(SelState)
+void PianorollEditor::cursorChanged(int tick, int pitch)
       {
+      QString position = tr("Tick %1").arg(tick);
+      if (_score && _score->sigmap()) {
+            int bar = 0;
+            int beat = 0;
+            int remainder = 0;
+            _score->sigmap()->tickValues(tick, &bar, &beat, &remainder);
+            position = tr("%1.%2.%3").arg(bar + 1).arg(beat + 1).arg(remainder);
+            }
+      _cursorSummary->setText(pitch >= 0
+            ? tr("%1  ·  %2").arg(position).arg(editorPitchName(pitch))
+            : position);
       }
 
-//---------------------------------------------------------
-//   veloTypeChanged
-//---------------------------------------------------------
-
-void PianorollEditor::veloTypeChanged(int val)
+void PianorollEditor::commitVelocity()
       {
-      QList<PianoItem*> items = pianoView->getSelectedItems();
-      if (!items.size())
+      if (!_velocityDirty)
             return;
-
-      _score->startCmd();
-      for (int i = 0; i < items.size(); i++) {
-            PianoItem* item = items[i];
-            Note* note = item->note();
-            if (Note::ValueType(val) == note->veloType())
-                  return;
-
-            int newVelocity = note->veloOffset();
-            int dynamicsVel = staff->velocities().val(note->tick());
-
-            // change velocity to equivalent in new metric
-            switch (Note::ValueType(val)) {
-                  case Note::ValueType::USER_VAL:
-                        newVelocity = static_cast<int>(dynamicsVel * (1 + newVelocity / 100.0));
-                        break;
-                  case Note::ValueType::OFFSET_VAL:
-                        newVelocity = static_cast<int>((newVelocity / (qreal)dynamicsVel - 1) * 100);
-                        break;
-                  }
-
-            _score->undo(new ChangeVelocity(note, Note::ValueType(val), newVelocity));
-            updateVelocity(note);
-            }
-      _score->endCmd();
+      _velocityDirty = false;
+      _model->setSelectionVelocity(_velocityField->value());
       }
 
-//---------------------------------------------------------
-//   updateVelocity
-//---------------------------------------------------------
-
-void PianorollEditor::updateVelocity(Note* note)
+void PianorollEditor::commitOnTime()
       {
-      Note::ValueType vt = note->veloType();
-      veloType->setCurrentIndex(int(vt));
-      switch (vt) {
-            case Note::ValueType::USER_VAL:
-                  velocity->setReadOnly(false);
-                  velocity->setSuffix("");
-                  break;
-            case Note::ValueType::OFFSET_VAL:
-                  velocity->setReadOnly(false);
-                  velocity->setSuffix("%");
-                  break;
-            }
-
-      switch (vt) {
-            case Note::ValueType::USER_VAL:
-                  velocity->setValue(note->veloOffset());
-                  break;
-            case Note::ValueType::OFFSET_VAL:
-                  velocity->setValue(note->veloOffset());
-                  break;
-            }
-
-      pianoLevels->update();
-      }
-
-//---------------------------------------------------------
-//   velocityChanged
-//---------------------------------------------------------
-
-void PianorollEditor::velocityChanged(int val)
-      {
-      QList<PianoItem*> items = pianoView->getSelectedItems();
-      if (!items.size())
+      if (!_onTimeDirty)
             return;
+      _onTimeDirty = false;
+      _model->setSelectionEventTiming(_onTimeField->value(), true);
+      }
 
-      _score->startCmd();
-      for (int i = 0; i < items.size(); i++) {
-            PianoItem* item = items[i];
-            Note* note = item->note();
-            Note::ValueType vt = note->veloType();
+void PianorollEditor::commitEventLength()
+      {
+      if (!_eventLengthDirty)
+            return;
+      _eventLengthDirty = false;
+      _model->setSelectionEventTiming(_eventLengthField->value(), false);
+      }
 
-            if (val == note->veloOffset())
+void PianorollEditor::seekToTick(int tick)
+      {
+      if (!_score)
+            return;
+      tick = qBound(0, tick, qMax(0, _model->scoreEndTick()));
+      _score->setPos(POS::CURRENT, Fraction::fromTicks(tick));
+      if (seq)
+            seq->seek(_score->masterScore()->repeatList().tick2utick(tick));
+      }
+
+void PianorollEditor::pitchPressed(int pitch, int staffIdx)
+      {
+      Staff* auditionStaff = nullptr;
+      if (_score && staffIdx >= 0 && staffIdx < _score->nstaves())
+            auditionStaff = _score->staff(staffIdx);
+      if (!auditionStaff)
+            auditionStaff = selectedEditStaff();
+      if (!auditionStaff)
+            auditionStaff = _staff;
+      if (!seq || !auditionStaff || !auditionStaff->part()
+          || !auditionStaff->part()->instrument())
+            return;
+      Channel* channel = auditionStaff->part()->instrument()->channel(0);
+      if (!channel)
+            return;
+      if (_auditionChannel >= 0 && _auditionPitch >= 0)
+            seq->sendEvent(NPlayEvent(ME_NOTEOFF, _auditionChannel, _auditionPitch, 0));
+      _auditionChannel = channel->channel();
+      _auditionPitch = qBound(0, pitch, 127);
+      // Use the non-timed overload: Seq's timed preview path calls stopNotes(),
+      // which resets sustain and pitch bend on every channel (including VSTs).
+      seq->startNote(_auditionChannel, _auditionPitch, 80, 0.0);
+      }
+
+void PianorollEditor::pitchReleased(int pitch)
+      {
+      if (!seq || _auditionChannel < 0 || _auditionPitch < 0)
+            return;
+      if (pitch >= 0 && pitch != _auditionPitch)
+            return;
+      seq->sendEvent(NPlayEvent(ME_NOTEOFF, _auditionChannel, _auditionPitch, 0));
+      _auditionChannel = -1;
+      _auditionPitch = -1;
+      }
+
+void PianorollEditor::scorePositionChanged(POS position, unsigned tick)
+      {
+      const int index = int(position);
+      if (index < 0 || index > 2)
+            return;
+      _locators[index].setTick(tick);
+      _view->setLocator(index, int(tick));
+      if (position == POS::CURRENT)
+            _view->setPlaybackTick(int(tick));
+      }
+
+void PianorollEditor::heartBeat(Seq* sequence)
+      {
+      if (!_score || !sequence)
+            return;
+      unsigned tick = sequence->getCurTick();
+      if (_score->masterScore())
+            tick = _score->masterScore()->repeatList().utick2tick(tick);
+      _view->setPlaybackTick(int(tick));
+      if (_followButton->isChecked() && sequence->isPlaying()
+          && !_view->interactionActive())
+            _view->followPlaybackTick(int(tick));
+      }
+
+void PianorollEditor::focusOnPosition(Position* position)
+      {
+      if (position && position->segment)
+            _view->ensureTickVisible(position->segment->tick().ticks(), true);
+      }
+
+void PianorollEditor::scheduleRebuild()
+      {
+      if (_updateScheduled)
+            return;
+      _updateScheduled = true;
+      QTimer::singleShot(0, this, &PianorollEditor::doRebuild);
+      }
+
+void PianorollEditor::doRebuild()
+      {
+      _updateScheduled = false;
+      if (_score) {
+            if (!_staff || !_score->staves().contains(_staff)) {
+                  setStaff(_score->nstaves() ? _score->staff(0) : nullptr);
                   return;
-
-            _score->undo(new ChangeVelocity(note, vt, val));
+                  }
+            const QList<Staff*>* current = _staff->part() ? _staff->part()->staves() : nullptr;
+            if (!current || *current != _partStaves) {
+                  rebuildScopeSelectors(_staff);
+                  updateScope();
+                  return;
+                  }
+            _model->rebuild();
             }
-      _score->endCmd();
-
-      pianoLevels->update();
+      updateSelectionFields();
       }
-
-//---------------------------------------------------------
-//   keyPressed
-//---------------------------------------------------------
-
-void PianorollEditor::keyPressed(int p)
-      {
-      seq->startNote(staff->part()->instrument()->channel(0)->channel(), p, 80, 0, 0.0);
-      }
-
-//---------------------------------------------------------
-//   keyReleased
-//---------------------------------------------------------
-
-void PianorollEditor::keyReleased(int /*p*/)
-      {
-      seq->stopNotes();
-      }
-
-//---------------------------------------------------------
-//   heartBeat
-//---------------------------------------------------------
-
-void PianorollEditor::heartBeat(Seq* s)
-      {
-      unsigned tick = s->getCurTick();
-      if (score()->masterScore())
-            tick = score()->masterScore()->repeatList().utick2tick(tick);
-      if (locator[0].tick() != tick) {
-            posChanged(POS::CURRENT, tick);
-            if (preferences.getBool(PREF_APP_PLAYBACK_FOLLOWSONG))
-                  pianoView->ensureVisible(tick);
-            }
-      }
-
-//---------------------------------------------------------
-//   moveLocator
-//---------------------------------------------------------
-
-void PianorollEditor::moveLocator(int i, const Pos& p)
-      {
-      if (locator[i].valid())
-            score()->setPos(POS(i), Fraction::fromTicks(p.tick()));
-      }
-
-//---------------------------------------------------------
-//   cmd
-//---------------------------------------------------------
-
-void PianorollEditor::cmd(QAction* /*a*/)
-      {
-      //score()->startCmd();
-      pianoView->setStaff(staff, locator);
-      pianoLevels->setStaff(staff, locator);
-      pianoLevelsChooser->setStaff(staff);
-      pianoKbd->setStaff(staff);
-      //score()->endCmd();
-      }
-
-//---------------------------------------------------------
-//   dataChanged
-//---------------------------------------------------------
 
 void PianorollEditor::dataChanged(const QRectF&)
       {
+      scheduleRebuild();
       }
-
-//---------------------------------------------------------
-//   removeScore
-//---------------------------------------------------------
-
-void PianorollEditor::removeScore()
-      {
-      _score = nullptr;
-      setStaff(nullptr);
-      }
-
-//---------------------------------------------------------
-//   changeEditElement
-//---------------------------------------------------------
-
-void PianorollEditor::changeEditElement(Element*)
-      {
-      }
-
-//---------------------------------------------------------
-//   cursor
-//---------------------------------------------------------
-
-QCursor PianorollEditor::cursor() const
-      {
-      return QCursor();
-      }
-
-//---------------------------------------------------------
-//   setCursor
-//---------------------------------------------------------
-
-void PianorollEditor::setCursor(const QCursor&)
-      {
-      }
-
-//---------------------------------------------------------
-//   matrix
-//---------------------------------------------------------
-
-const QTransform& PianorollEditor::matrix() const
-      {
-      static QTransform t;
-      return t;
-      }
-
-//---------------------------------------------------------
-//   elementNear
-//---------------------------------------------------------
-
-Element* PianorollEditor::elementNear(QPointF)
-      {
-      return 0;
-      }
-
-//---------------------------------------------------------
-//   updateAll
-//---------------------------------------------------------
 
 void PianorollEditor::updateAll()
       {
-      if (updateScheduled)
-            return;
-
-      QTimer::singleShot(0, this, &PianorollEditor::doUpdate);
-      updateScheduled = true;
-      }
-
-//---------------------------------------------------------
-//   doUpdate
-//---------------------------------------------------------
-
-void PianorollEditor::doUpdate()
-      {
-      updateScheduled = false;
-
-      if (staff && staff->idx() == -1) { // staff removed
-            removeScore();
-            return;
-            }
-      pianoView->updateNotes();
-      pianoLevels->updateNotes();
+      scheduleRebuild();
       }
 
 void PianorollEditor::playlistChanged()
       {
+      scheduleRebuild();
       }
 
-//---------------------------------------------------------
-//   showWavView
-//---------------------------------------------------------
-
-void PianorollEditor::showWaveView(bool val)
+void PianorollEditor::changeSelection(SelState state)
       {
-      if (val) {
-            if (waveView == 0) {
-                  waveView = new WaveView;
-                  connect(pianoView, SIGNAL(magChanged(double,double)), waveView, SLOT(setMag(double,double)));
-                  connect(pianoView, SIGNAL(posChanged(Pos&)), waveView, SLOT(setValue(Pos&)));
-                  waveView->setAudio(_score->audio());
-                  waveView->setScore(_score, locator);
-                  split->addWidget(waveView);
-                  waveView->setXpos(ruler->xpos());
-                  }
-            waveView->setVisible(true);
-            }
-      else {
-            if (waveView)
-                  waveView->setVisible(false);
-            }
+      _model->syncSelection();
+      updateSelectionFields();
+      if (!_selectionFromPianoRoll && state == SelState::LIST)
+            focusSelectedNoteInPianoRoll();
       }
 
-//---------------------------------------------------------
-//   posChanged
-//    position in score has changed
-//---------------------------------------------------------
-
-void PianorollEditor::posChanged(POS p, unsigned tick)
+void PianorollEditor::removeScore()
       {
-      if (locator[int(p)].tick() == unsigned(tick))
+      // Called while Score itself may be destroying its viewer list.  Do not
+      // call removeViewer() from here.
+      detachScore(false);
+      _staff = nullptr;
+      _partStaves.clear();
+      _model->clear();
+      centralWidget()->setEnabled(false);
+      }
+
+void PianorollEditor::changeEditElement(Element*)
+      {
+      scheduleRebuild();
+      }
+
+void PianorollEditor::onElementDestruction(Element* element)
+      {
+      // Score notifications can be followed by a paint event before the
+      // coalesced rebuild. Drop only the dying pointer immediately; clearing
+      // the entire projection here also resets the viewport during note moves.
+      _model->invalidateElement(element);
+      scheduleRebuild();
+      }
+
+QCursor PianorollEditor::cursor() const
+      {
+      return _view ? _view->cursor() : QCursor();
+      }
+
+void PianorollEditor::setCursor(const QCursor& cursorValue)
+      {
+      if (_view)
+            _view->setCursor(cursorValue);
+      }
+
+Element* PianorollEditor::elementNear(QPointF)
+      {
+      return nullptr;
+      }
+
+void PianorollEditor::setEditNoteLength(int)
+      {
+      // Note length is defined by the horizontal draw gesture.
+      }
+
+void PianorollEditor::setEditNoteVoice(int voice)
+      {
+      _view->setEditVoice(voice);
+      }
+
+void PianorollEditor::setEditNoteTool(PianoRollEditTool tool)
+      {
+      KeyEditorView::EditTool mapped = KeyEditorView::EditTool::Select;
+      if (tool == PianoRollEditTool::ADD || tool == PianoRollEditTool::APPEND_NOTE)
+            mapped = KeyEditorView::EditTool::Draw;
+      else if (tool == PianoRollEditTool::ERASE)
+            mapped = KeyEditorView::EditTool::Erase;
+      if (QAbstractButton* button = _editToolGroup->button(int(mapped)))
+            button->setChecked(true);
+      _view->setEditTool(mapped);
+      }
+
+void PianorollEditor::setEditNoteDots(int, QToolButton*)
+      {
+      }
+
+void PianorollEditor::handleAction(QAction* action)
+      {
+      if (!action)
             return;
-      setLocator(p, tick);
-      pianoView->moveLocator(int(p));
-      if (waveView)
-            waveView->moveLocator(int(p));
-      ruler->update();
-      pianoLevels->update();
+      const QString command = action->data().toString();
+      if (command == QStringLiteral("zoom-in-horiz-pre"))
+            zoom(1, true);
+      else if (command == QStringLiteral("zoom-out-horiz-pre"))
+            zoom(-1, true);
+      else if (command == QStringLiteral("zoom-in-vert-pre"))
+            zoom(1, false);
+      else if (command == QStringLiteral("zoom-out-vert-pre"))
+            zoom(-1, false);
       }
 
-//---------------------------------------------------------
-//   onTimeChanged
-//---------------------------------------------------------
-
-void PianorollEditor::onTimeChanged(int val)
+void PianorollEditor::zoom(int amount, bool horizontal)
       {
-      QList<PianoItem*> items = pianoView->getSelectedItems();
-      if (!items.size())
-            return;
-
-      _score->startCmd();
-      for (int i = 0; i < items.size(); i++) {
-            PianoItem* item = items[i];
-            Note* note = item->note();
-            NoteEvent* event = item->getTweakNoteEvent();
-            if (!event || event->ontime() == val)
-                  return;
-
-            NoteEvent ne = *event;
-            ne.setOntime(val);
-
-            _score->undo(new ChangeNoteEvent(note, event, ne));
+      if (horizontal) {
+            _view->setHorizontalZoom(_view->horizontalZoom() * std::pow(1.16, amount));
             }
-      _score->endCmd();
-
-      pianoView->updateNotes();
-      pianoLevels->updateNotes();
+      else
+            _view->setVerticalZoom(_view->verticalZoom() + amount);
       }
 
-//---------------------------------------------------------
-//   tickLenChanged
-//---------------------------------------------------------
-
-void PianorollEditor::tickLenChanged(int val)
+void PianorollEditor::readSettings()
       {
-      QList<PianoItem*> items = pianoView->getSelectedItems();
-      if (!items.size())
-            return;
-
-      _score->startCmd();
-      for (int i = 0; i < items.size(); i++) {
-            PianoItem* item = items[i];
-            Note* note = item->note();
-            NoteEvent* event = item->getTweakNoteEvent();
-            if (!event || event->len() == val)
-                  return;
-
-            NoteEvent ne = *event;
-            ne.setLen(val);
-
-            _score->undo(new ChangeNoteEvent(note, event, ne));
-            }
-      _score->endCmd();
-
-      pianoView->updateNotes();
-      pianoLevels->updateNotes();
+      MuseScore::restoreGeometry(this);
+      QSettings settings;
+      settings.beginGroup(QStringLiteral("PianoRollKeyEditor"));
+      _snapButton->setChecked(settings.value(QStringLiteral("snap"), true).toBool());
+      _gridSelector->setCurrentIndex(qBound(0, settings.value(QStringLiteral("grid"), 4).toInt(),
+                                             _gridSelector->count() - 1));
+      _laneSelector->setCurrentIndex(qBound(0, settings.value(QStringLiteral("lane"), 0).toInt(),
+                                             _laneSelector->count() - 1));
+      _view->setHorizontalZoom(qBound(18,
+            settings.value(QStringLiteral("horizontalZoom"), 120).toInt(), 900) / 1000.0);
+      _view->setVerticalZoom(qBound(8,
+            settings.value(QStringLiteral("verticalZoom"), 16).toInt(), 34));
+      const int defaultControllerHeight = qMax(160, qRound(height() * 0.25));
+      _view->setControllerHeight(settings.value(QStringLiteral("controllerHeightV3"),
+                                                 defaultControllerHeight).toInt());
+      settings.endGroup();
+      gridChanged(_gridSelector->currentIndex());
       }
 
-//---------------------------------------------------------
-//   zoom
-//---------------------------------------------------------
-
-void PianorollEditor::zoom(int amount, bool horiz)
+void PianorollEditor::writeSettings()
       {
-      int cx = pianoView->width() / 2;
-      int cy = pianoView->height() / 2;
-
-      pianoView->zoomView(amount, horiz, cx, cy);
+      MuseScore::saveGeometry(this);
+      QSettings settings;
+      settings.beginGroup(QStringLiteral("PianoRollKeyEditor"));
+      settings.setValue(QStringLiteral("snap"), _snapButton->isChecked());
+      settings.setValue(QStringLiteral("grid"), _gridSelector->currentIndex());
+      settings.setValue(QStringLiteral("lane"), _laneSelector->currentIndex());
+      settings.setValue(QStringLiteral("horizontalZoom"),
+                        qRound(_view->horizontalZoom() * 1000.0));
+      settings.setValue(QStringLiteral("verticalZoom"), _view->verticalZoom());
+      settings.setValue(QStringLiteral("controllerHeight"), _view->controllerHeight());
+      settings.setValue(QStringLiteral("controllerHeightV2"), _view->controllerHeight());
+      settings.setValue(QStringLiteral("controllerHeightV3"), _view->controllerHeight());
+      settings.endGroup();
       }
 
-}
+} // namespace Ms
