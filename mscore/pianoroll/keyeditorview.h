@@ -95,16 +95,16 @@ class KeyEditorView : public QAbstractScrollArea
 
       QVector<KeyEditorModel::NoteEdit> _originalEdits;
       QVector<KeyEditorModel::NoteEdit> _previewEdits;
-      QSet<Note*> _previewSources;
+      QSet<int> _previewBlockIndexes;
       QRect _marquee;
       QPoint _marqueeContentAnchor;
       int _marqueeEndTick { 0 };
       int _marqueeEndPitch { 60 };
       KeyEditorModel::NoteEdit _drawPreview;
 
-      QHash<Note*, int> _velocityOriginal;
-      QHash<Note*, int> _velocityPreview;
-      Note* _velocityAnchor { nullptr };
+      QHash<int, int> _velocityOriginal;
+      QHash<int, int> _velocityPreview;
+      int _velocityAnchor { -1 };
       QRect _velocityTransformRect;
 
       Spanner* _selectedPedal { nullptr };
@@ -146,7 +146,7 @@ class KeyEditorView : public QAbstractScrollArea
       int velocityHandleX(const KeyEditorModel::NoteBlock&) const;
       QRect velocitySelectionRect() const;
       DragMode velocitySelectionHandleAt(const QPoint&) const;
-      QRegion velocityGestureRegion(const QHash<Note*, int>&) const;
+      QRegion velocityGestureRegion(const QHash<int, int>&) const;
       QColor staffColor(int staffIdx) const;
       QColor noteColor(int staffIdx, int voice) const;
       bool isBlackKey(int pitch) const;
@@ -161,7 +161,7 @@ class KeyEditorView : public QAbstractScrollArea
       void beginMarquee(const QPoint&);
       void finishMarquee();
       void drawNoteAt(const QPoint&, bool commit);
-      void selectNoteForClick(Note*, Qt::KeyboardModifiers);
+      void selectNoteForClick(int noteIndex, Qt::KeyboardModifiers);
       void auditionPitchBriefly(int pitch, int staffIdx);
       void stopAudition();
       bool shouldAutoScrollForDrag(const QPoint&) const;
@@ -174,7 +174,7 @@ class KeyEditorView : public QAbstractScrollArea
       bool nudgeSelection(int tickDelta, int pitchDelta, bool duplicate = false);
       bool quantizeSelection();
 
-      Note* velocityHandleAt(const QPoint&) const;
+      int velocityHandleAt(const QPoint&) const;
       void beginVelocityGesture(const QPoint&);
       void updateVelocityGesture(const QPoint&);
       void finishVelocityGesture();

@@ -43,8 +43,8 @@ class TestPianoRoll : public QObject, public MTest
       void spaceRequestsPlaybackToggle();
       void controllerSelectorLivesInLane();
       void playbackTimingDoesNotChangeNotation();
-      void graceNotesAreProjected();
-      void arpeggioEventsAreProjected();
+      void tiedPlaybackResizeDoesNotCompound();
+      void renderedEventsAreIndividuallyEditable();
       };
 
 void TestPianoRoll::allTracksProjectionAndRender()
@@ -260,11 +260,13 @@ void TestPianoRoll::playbackTimingDoesNotChangeNotation()
       const int rootTicks = note->chord()->actualTicks().ticks();
       QVERIFY(rootTicks >= 4);
 
-      model.setPlaybackTimingMode(true);
       const int desiredStart = notationStart + rootTicks / 4;
       const int desiredEnd = desiredStart + rootTicks / 2;
+      const int sourceIndex = model.noteIndex(note);
+      QVERIFY(sourceIndex >= 0);
       KeyEditorModel::NoteEdit edit { note, desiredStart, desiredEnd, note->pitch(),
-                                      note->staffIdx(), note->voice() };
+                                      note->staffIdx(), note->voice(),
+                                      model.notes()[sourceIndex].eventIndex };
       QVERIFY(model.applyPlaybackTimingEdits({ edit }));
 
       QCOMPARE(note->tick().ticks(), notationStart);
@@ -285,30 +287,48 @@ void TestPianoRoll::playbackTimingDoesNotChangeNotation()
       delete testScore;
       }
 
-void TestPianoRoll::graceNotesAreProjected()
+void TestPianoRoll::tiedPlaybackResizeDoesNotCompound()
       {
-      MasterScore* testScore = readScore(QStringLiteral("libmscore/midi/testGraceBefore.mscx"));
+      MasterScore* testScore = readScore(QStringLiteral("musicxml/io/importTie1_ref.mscx"));
       QVERIFY(testScore);
       Staff* staff = testScore->staff(0);
       QVERIFY(staff);
-
       KeyEditorModel model;
       model.setContext(staff, { staff });
-      int graceCount = 0;
-      for (const KeyEditorModel::NoteBlock& block : model.notes()) {
-            if (!block.grace)
-                  continue;
-            ++graceCount;
-            QVERIFY(block.note);
-            QVERIFY(block.note->chord()->isGrace());
-            QVERIFY(block.endTick > block.startTick);
+
+      int tiedIndex = -1;
+      for (int i = 0; i < model.notes().size(); ++i) {
+            const KeyEditorModel::NoteBlock& block = model.notes()[i];
+            if (block.note && block.note->tieFor()) {
+                  tiedIndex = i;
+                  break;
+                  }
             }
-      QVERIFY(graceCount > 0);
+      QVERIFY2(tiedIndex >= 0, "fixture must contain a rendered tied note");
+
+      const KeyEditorModel::NoteBlock first = model.notes()[tiedIndex];
+      const int firstTargetEnd = first.endTick + 120;
+      KeyEditorModel::NoteEdit edit { first.note, first.startTick, firstTargetEnd,
+                                      first.pitch, first.staffIdx, first.voice,
+                                      first.eventIndex };
+      QVERIFY(model.applyPlaybackTimingEdits({ edit }));
+      int index = model.noteIndex(first.note, first.eventIndex);
+      QVERIFY(index >= 0);
+      QCOMPARE(model.notes()[index].endTick, firstTargetEnd);
+
+      const KeyEditorModel::NoteBlock second = model.notes()[index];
+      const int secondTargetEnd = second.endTick + 120;
+      edit.startTick = second.startTick;
+      edit.endTick = secondTargetEnd;
+      QVERIFY(model.applyPlaybackTimingEdits({ edit }));
+      index = model.noteIndex(first.note, first.eventIndex);
+      QVERIFY(index >= 0);
+      QCOMPARE(model.notes()[index].endTick, secondTargetEnd);
 
       delete testScore;
       }
 
-void TestPianoRoll::arpeggioEventsAreProjected()
+void TestPianoRoll::renderedEventsAreIndividuallyEditable()
       {
       MasterScore* testScore = readScore(
             QStringLiteral("testscript/scripts/palette_arpeggio_gliss_1.mscx"));
@@ -318,15 +338,37 @@ void TestPianoRoll::arpeggioEventsAreProjected()
 
       KeyEditorModel model;
       model.setContext(staff, { staff });
-      bool foundOffsetEvent = false;
-      for (const KeyEditorModel::NoteBlock& block : model.notes()) {
-            if (block.eventIndex >= 0 && (block.ontime != 0
-                || block.eventLength != NoteEvent::NOTE_LENGTH || block.pitchOffset != 0)) {
-                  foundOffsetEvent = true;
+      QHash<Note*, QVector<int> > bySource;
+      for (int i = 0; i < model.notes().size(); ++i) {
+            const KeyEditorModel::NoteBlock& block = model.notes()[i];
+            if (block.note && block.eventIndex >= 0)
+                  bySource[block.note].append(i);
+            }
+      Note* source = nullptr;
+      QVector<int> sourceBlocks;
+      for (auto it = bySource.constBegin(); it != bySource.constEnd(); ++it) {
+            if (it.value().size() > 1) {
+                  source = it.key();
+                  sourceBlocks = it.value();
                   break;
                   }
             }
-      QVERIFY(foundOffsetEvent);
+      QVERIFY2(source, "fixture must contain a multi-event ornament or glissando");
+      const int originalEventCount = source->playEvents().size();
+      const int originalProjectionCount = model.notes().size();
+      const int notationChordSize = source->chord()->notes().size();
+
+      model.selectEvents({ sourceBlocks.front() }, KeyEditorModel::SelectionOperation::Replace);
+      QCOMPARE(model.selectedEventIndexes().size(), 1);
+      QVERIFY(model.deleteSelection());
+      QCOMPARE(source->playEvents().size(), originalEventCount - 1);
+      QCOMPARE(model.notes().size(), originalProjectionCount - 1);
+      QCOMPARE(source->chord()->notes().size(), notationChordSize);
+
+      testScore->undoRedo(true, nullptr);
+      model.rebuild();
+      QCOMPARE(source->playEvents().size(), originalEventCount);
+      QCOMPARE(model.notes().size(), originalProjectionCount);
 
       delete testScore;
       }

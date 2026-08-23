@@ -13,6 +13,8 @@
 #ifndef __NOTEEVENT_H__
 #define __NOTEEVENT_H__
 
+#include <QtGlobal>
+
 namespace Ms {
 
 class XmlWriter;
@@ -26,12 +28,13 @@ class NoteEvent {
       int _pitch;   // relative pitch to note pitch
       int _ontime;  // one unit is 1/1000 of nominal note len
       int _len;     // one unit is 1/1000 of nominal note len
+      int _velocity; // absolute MIDI velocity override, -1 uses score dynamics
 
    public:
       constexpr static int NOTE_LENGTH = 1000;
 
-      NoteEvent() : _pitch(0), _ontime(0), _len(NOTE_LENGTH) {}
-      NoteEvent(int a, int b, int c) : _pitch(a), _ontime(b), _len(c) {}
+      NoteEvent() : _pitch(0), _ontime(0), _len(NOTE_LENGTH), _velocity(-1) {}
+      NoteEvent(int a, int b, int c) : _pitch(a), _ontime(b), _len(c), _velocity(-1) {}
 
       void read(XmlReader&);
       void write(XmlWriter&) const;
@@ -40,9 +43,11 @@ class NoteEvent {
       int ontime() const     { return _ontime; }
       int offtime() const    { return _ontime + _len; }
       int len() const        { return _len; }
+      int velocity() const   { return _velocity; }
       void setPitch(int v)   { _pitch = v; }
       void setOntime(int v)  { _ontime = v; }
       void setLen(int v)     { _len = v;    }
+      void setVelocity(int v) { _velocity = v < 0 ? -1 : qBound(1, v, 127); }
       bool operator==(const NoteEvent&) const;
       };
 

@@ -5,6 +5,7 @@
 
 #include "keyeditormodel.h"
 
+#include "audio/midi/event.h"
 #include "libmscore/beam.h"
 #include "libmscore/chord.h"
 #include "libmscore/measure.h"
@@ -39,6 +40,23 @@ static const char* KEY_EDITOR_MIME = "application/x-musescore-key-editor-notes";
 static const quint32 KEY_EDITOR_CLIPBOARD_MAGIC = 0x4b455933; // KEY3
 static const quint16 KEY_EDITOR_CLIPBOARD_VERSION = 3;
 
+static void undoEventListForLinkedNotes(Note* source, const NoteEventList& events)
+      {
+      if (!source)
+            return;
+      QSet<Note*> seen;
+      for (ScoreElement* linkedElement : source->linkList()) {
+            if (!linkedElement || linkedElement->type() != ElementType::NOTE)
+                  continue;
+            Note* linkedNote = toNote(linkedElement);
+            if (!linkedNote->score() || seen.contains(linkedNote))
+                  continue;
+            seen.insert(linkedNote);
+            NoteEventList linkedEvents = events;
+            linkedNote->score()->undo(new ChangeNoteEventList(linkedNote, linkedEvents));
+            }
+      }
+
 static qreal velocityRampProgress(ChangeMethod method, qreal progress)
       {
       progress = qBound<qreal>(0.0, progress, 1.0);
@@ -68,12 +86,25 @@ void KeyEditorModel::clear()
       _score = nullptr;
       _editStaff = nullptr;
       _visibleStaves.clear();
+      _projectionRebuildPending = false;
       invalidateProjection();
+      }
+
+void KeyEditorModel::setProjectionUpdatesSuspended(bool suspended)
+      {
+      if (_projectionUpdatesSuspended == suspended)
+            return;
+      _projectionUpdatesSuspended = suspended;
+      if (!suspended && _projectionRebuildPending) {
+            _projectionRebuildPending = false;
+            rebuild();
+            }
       }
 
 void KeyEditorModel::invalidateProjection()
       {
       _notes.clear();
+      _selectedEvents.clear();
       _pedals.clear();
       _timeBuckets.clear();
       _noteLookup.clear();
@@ -141,6 +172,12 @@ Note* KeyEditorModel::rootNote(Note* note) const
       return note;
       }
 
+QString KeyEditorModel::eventKey(Note* note, int eventIndex) const
+      {
+      return QString::number(quintptr(note), 16) + QLatin1Char(':')
+           + QString::number(eventIndex);
+      }
+
 Chord* KeyEditorModel::playbackAnchor(Note* note) const
       {
       if (!note || !note->chord())
@@ -160,6 +197,37 @@ QSet<Note*> KeyEditorModel::tieChain(Note* original) const
             note = note->tieFor() ? note->tieFor()->endNote() : nullptr;
             }
       return result;
+      }
+
+int KeyEditorModel::playbackTieTail(Note* note, int eventIndex) const
+      {
+      if (!note || !note->tieFor() || eventIndex < 0
+          || eventIndex != note->playEvents().size() - 1)
+            return 0;
+
+      int tail = 0;
+      Note* continuation = note->tieFor()->endNote();
+      QSet<Note*> seen;
+      while (continuation && !seen.contains(continuation)) {
+            seen.insert(continuation);
+            bool startsGlissando = false;
+            for (Spanner* spanner : continuation->spannerFor()) {
+                  if (spanner && spanner->type() == ElementType::GLISSANDO) {
+                        startsGlissando = true;
+                        break;
+                        }
+                  }
+            const NoteEventList& events = continuation->playEvents();
+            if (events.size() != 1 || startsGlissando)
+                  break;
+            if (continuation->chord()) {
+                  tail += continuation->chord()->actualTicks().ticks()
+                        * events.front().len() / NoteEvent::NOTE_LENGTH;
+                  }
+            continuation = continuation->tieFor()
+                         ? continuation->tieFor()->endNote() : nullptr;
+            }
+      return qMax(0, tail);
       }
 
 bool KeyEditorModel::playbackBounds(Note* original, int& startTick, int& endTick) const
@@ -286,6 +354,12 @@ void KeyEditorModel::rebuildIndexes()
 
 void KeyEditorModel::rebuild()
       {
+      // renderMidi() regenerates NoteEventLists. Defer that mutation while the
+      // sequencer's renderer may be reading the same lists.
+      if (_projectionUpdatesSuspended) {
+            _projectionRebuildPending = true;
+            return;
+            }
       if (_rebuilding)
             return;
       _rebuilding = true;
@@ -295,71 +369,54 @@ void KeyEditorModel::rebuild()
             _scoreEndTick = _score->lastMeasure()->endTick().ticks();
 
       if (_score && !_visibleStaves.isEmpty()) {
-            // The key editor represents sounding events, not just notation
-            // rectangles. Regenerate Auto event lists so arpeggios, tremolos,
-            // ornaments, swing, gate time and grace timing are all current.
-            // User event lists are intentionally preserved by Score.
-            _score->createPlayEvents();
-            auto appendChord = [this](Chord* chord, int staffIdx, int voice, bool grace) {
-                  if (!chord)
-                        return;
-                  for (Note* note : chord->notes()) {
-                        if (!note || note->tieBack())
-                              continue;
-                        Chord* anchor = playbackAnchor(note);
-                        const int anchorTicks = anchor ? qMax(1, anchor->actualTicks().ticks()) : 1;
-                        const int anchorStart = anchor ? anchor->tick().ticks() : chord->tick().ticks();
-                        const int tieTail = grace ? 0
-                              : qMax(0, note->playTicks() - chord->actualTicks().ticks());
-                        auto appendEvent = [&](int eventIndex, int ontime, int length, int pitchOffset) {
-                              NoteBlock block;
-                              block.note = note;
-                              block.eventIndex = eventIndex;
-                              block.ontime = ontime;
-                              block.eventLength = length;
-                              block.pitchOffset = pitchOffset;
-                              block.startTick = anchorStart
-                                    + qRound(qreal(anchorTicks) * ontime / NoteEvent::NOTE_LENGTH);
-                              block.endTick = block.startTick
-                                    + qMax(1, qRound(qreal(anchorTicks) * qMax(1, length)
-                                                       / NoteEvent::NOTE_LENGTH)) + tieTail;
-                              if (block.startTick < 0) {
-                                    block.endTick -= block.startTick;
-                                    block.startTick = 0;
-                                    }
-                              block.pitch = qBound(0, note->pitch() + pitchOffset, 127);
-                              block.staffIdx = staffIdx;
-                              block.voice = voice;
-                              block.velocity = effectiveVelocityInternal(note);
-                              block.grace = grace;
-                              _notes.append(block);
-                              _scoreEndTick = qMax(_scoreEndTick, block.endTick);
-                              };
-                        if (note->playEvents().isEmpty())
-                              appendEvent(-1, 0, NoteEvent::NOTE_LENGTH, 0);
-                        else {
-                              for (int eventIndex = 0; eventIndex < note->playEvents().size(); ++eventIndex) {
-                                    const NoteEvent& event = note->playEvents()[eventIndex];
-                                    appendEvent(eventIndex, event.ontime(), event.len(), event.pitch());
-                                    }
-                              }
-                        }
+            // Use the same final MIDI event stream as playback. This includes
+            // grace notes and every generated glissando, trill, tremolo and
+            // arpeggio event without ornament-specific projection code.
+            EventMap midiEvents;
+            _score->renderMidi(&midiEvents, false, false, _score->synthesizerState());
+            QHash<QString, QVector<int> > active;
+            auto eventKey = [](const Note* note, int eventIndex, int pitch, int channel) {
+                  return QString::number(quintptr(note), 16) + QLatin1Char(':')
+                       + QString::number(eventIndex) + QLatin1Char(':')
+                       + QString::number(pitch) + QLatin1Char(':')
+                       + QString::number(channel);
                   };
-            for (Segment* segment = _score->firstSegment(SegmentType::ChordRest);
-                 segment; segment = segment->next1(SegmentType::ChordRest)) {
-                  for (Staff* staff : _visibleStaves) {
-                        if (!staff)
-                              continue;
-                        for (int voice = 0; voice < VOICES; ++voice) {
-                              const int track = staff->idx() * VOICES + voice;
-                              Element* element = segment->element(track);
-                              if (!element || !element->isChord())
-                                    continue;
-                              Chord* chord = toChord(element);
-                              for (Chord* graceChord : chord->graceNotes())
-                                    appendChord(graceChord, staff->idx(), voice, true);
-                              appendChord(chord, staff->idx(), voice, false);
+            for (const auto& entry : midiEvents) {
+                  const int tick = entry.first;
+                  const NPlayEvent& event = entry.second;
+                  if (event.type() != ME_NOTEON || !event.note())
+                        continue;
+                  Note* note = const_cast<Note*>(event.note());
+                  const int staffIdx = event.getOriginatingStaff() >= 0
+                                     ? event.getOriginatingStaff() : note->staffIdx();
+                  if (!staffIsVisible(staffIdx))
+                        continue;
+                  const QString key = eventKey(note, event.noteEventIndex(),
+                                               event.pitch(), event.channel());
+                  if (event.velo() > 0) {
+                        NoteBlock block;
+                        block.note = note;
+                        block.eventIndex = event.noteEventIndex();
+                        block.startTick = tick;
+                        block.endTick = tick + 1;
+                        block.pitch = event.pitch();
+                        block.staffIdx = staffIdx;
+                        block.voice = note->voice();
+                        block.velocity = event.velo();
+                        block.grace = note->chord() && note->chord()->isGrace();
+                        if (block.eventIndex >= 0 && block.eventIndex < note->playEvents().size()) {
+                              const NoteEvent& sourceEvent = note->playEvents()[block.eventIndex];
+                              block.ontime = sourceEvent.ontime();
+                              block.eventLength = sourceEvent.len();
+                              block.pitchOffset = sourceEvent.pitch();
                               }
+                        active[key].append(_notes.size());
+                        _notes.append(block);
+                        }
+                  else if (!active[key].isEmpty()) {
+                        const int index = active[key].takeFirst();
+                        _notes[index].endTick = qMax(_notes[index].startTick + 1, tick + 1);
+                        _scoreEndTick = qMax(_scoreEndTick, _notes[index].endTick);
                         }
                   }
             }
@@ -372,6 +429,16 @@ void KeyEditorModel::rebuild()
                   return a.staffIdx < b.staffIdx;
             return a.voice < b.voice;
             });
+      QSet<QString> validEvents;
+      for (const NoteBlock& block : qAsConst(_notes))
+            validEvents.insert(eventKey(block.note, block.eventIndex));
+      _selectedEvents.intersect(validEvents);
+      if (_selectedEvents.isEmpty()) {
+            for (const NoteBlock& block : qAsConst(_notes)) {
+                  if (noteSelected(block.note))
+                        _selectedEvents.insert(eventKey(block.note, block.eventIndex));
+                  }
+            }
       rebuildIndexes();
       rebuildPedals();
       _rebuilding = false;
@@ -380,6 +447,26 @@ void KeyEditorModel::rebuild()
 
 void KeyEditorModel::syncSelection()
       {
+      QSet<Note*> scoreSources;
+      for (const NoteBlock& block : qAsConst(_notes)) {
+            if (noteSelected(block.note))
+                  scoreSources.insert(rootNote(block.note));
+            }
+      QSet<Note*> eventSources;
+      for (const NoteBlock& block : qAsConst(_notes)) {
+            if (_selectedEvents.contains(eventKey(block.note, block.eventIndex)))
+                  eventSources.insert(rootNote(block.note));
+            }
+      // A piano-roll selection may contain only some generated events from a
+      // source note. Preserve that subset when Score echoes the same source
+      // selection back to its viewers; expand only a genuinely external one.
+      if (scoreSources != eventSources) {
+            _selectedEvents.clear();
+            for (const NoteBlock& block : qAsConst(_notes)) {
+                  if (scoreSources.contains(rootNote(block.note)))
+                        _selectedEvents.insert(eventKey(block.note, block.eventIndex));
+                  }
+            }
       emit selectionChanged();
       }
 
@@ -423,7 +510,7 @@ int KeyEditorModel::noteAt(int tick, int pitch) const
       {
       const QVector<int> hits = notesInRange(tick, tick, pitch, pitch);
       for (auto it = hits.crbegin(); it != hits.crend(); ++it) {
-            if (_notes[*it].note->selected())
+            if (eventSelected(*it))
                   return *it;
             }
       return hits.isEmpty() ? -1 : hits.last();
@@ -432,6 +519,15 @@ int KeyEditorModel::noteAt(int tick, int pitch) const
 int KeyEditorModel::noteIndex(Note* note) const
       {
       return _noteLookup.value(rootNote(note), -1);
+      }
+
+int KeyEditorModel::noteIndex(Note* note, int eventIndex) const
+      {
+      for (int i = 0; i < _notes.size(); ++i) {
+            if (_notes[i].note == note && _notes[i].eventIndex == eventIndex)
+                  return i;
+            }
+      return -1;
       }
 
 bool KeyEditorModel::noteSelected(Note* original) const
@@ -447,13 +543,37 @@ bool KeyEditorModel::noteSelected(Note* original) const
       return false;
       }
 
+bool KeyEditorModel::eventSelected(int noteIndex) const
+      {
+      if (noteIndex < 0 || noteIndex >= _notes.size())
+            return false;
+      const NoteBlock& block = _notes[noteIndex];
+      return _selectedEvents.contains(eventKey(block.note, block.eventIndex));
+      }
+
+bool KeyEditorModel::eventSelected(Note* note, int eventIndex) const
+      {
+      return note && _selectedEvents.contains(eventKey(note, eventIndex));
+      }
+
+QVector<int> KeyEditorModel::selectedEventIndexes() const
+      {
+      QVector<int> result;
+      for (int i = 0; i < _notes.size(); ++i) {
+            if (eventSelected(i))
+                  result.append(i);
+            }
+      return result;
+      }
+
 QList<Note*> KeyEditorModel::selectedRootNotes() const
       {
       QList<Note*> result;
       QSet<Note*> seen;
-      for (const NoteBlock& block : _notes) {
+      for (int i = 0; i < _notes.size(); ++i) {
+            const NoteBlock& block = _notes[i];
             Note* note = rootNote(block.note);
-            if (note && noteSelected(note) && !seen.contains(note)) {
+            if (note && eventSelected(i) && !seen.contains(note)) {
                   seen.insert(note);
                   result.append(note);
                   }
@@ -468,19 +588,30 @@ QList<Note*> KeyEditorModel::selectedNotes() const
 
 void KeyEditorModel::select(const QList<Note*>& notes, SelectionOperation operation)
       {
+      QSet<Note*> requestedNotes;
+      for (Note* note : notes)
+            requestedNotes.insert(rootNote(note));
+      QVector<int> requested;
+      for (int i = 0; i < _notes.size(); ++i) {
+            if (requestedNotes.contains(rootNote(_notes[i].note)))
+                  requested.append(i);
+            }
+      selectEvents(requested, operation);
+      }
+
+void KeyEditorModel::selectEvents(const QVector<int>& indexes, SelectionOperation operation)
+      {
       if (!_score)
             return;
-      QSet<Note*> requested;
-      for (Note* note : notes) {
-            note = rootNote(note);
-            if (note && staffIsVisible(note->staffIdx()))
-                  requested.insert(note);
+      QSet<QString> requested;
+      for (int index : indexes) {
+            if (index >= 0 && index < _notes.size()) {
+                  const NoteBlock& block = _notes[index];
+                  requested.insert(eventKey(block.note, block.eventIndex));
+                  }
             }
-      QSet<Note*> old;
-      for (Note* note : selectedRootNotes())
-            old.insert(note);
-
-      QSet<Note*> next;
+      const QSet<QString> old = _selectedEvents;
+      QSet<QString> next;
       switch (operation) {
             case SelectionOperation::Replace:
                   next = requested;
@@ -491,11 +622,11 @@ void KeyEditorModel::select(const QList<Note*>& notes, SelectionOperation operat
                   break;
             case SelectionOperation::Toggle:
                   next = old;
-                  for (Note* note : qAsConst(requested)) {
-                        if (next.contains(note))
-                              next.remove(note);
+                  for (const QString& key : qAsConst(requested)) {
+                        if (next.contains(key))
+                              next.remove(key);
                         else
-                              next.insert(note);
+                              next.insert(key);
                         }
                   break;
             case SelectionOperation::Subtract:
@@ -506,12 +637,20 @@ void KeyEditorModel::select(const QList<Note*>& notes, SelectionOperation operat
       if (next == old)
             return;
 
+      _selectedEvents = next;
       _score->startCmd();
       Selection& selection = _score->selection();
       selection.deselectAll();
-      for (Note* note : qAsConst(next)) {
-            selection.add(note);
-            _score->addRefresh(note->canvasBoundingRect());
+      QSet<Note*> selectedSources;
+      for (const NoteBlock& block : qAsConst(_notes)) {
+            if (!_selectedEvents.contains(eventKey(block.note, block.eventIndex)))
+                  continue;
+            Note* note = rootNote(block.note);
+            if (note && !selectedSources.contains(note)) {
+                  selectedSources.insert(note);
+                  selection.add(note);
+                  _score->addRefresh(note->canvasBoundingRect());
+                  }
             }
       _score->endCmd();
       emit selectionChanged();
@@ -520,23 +659,21 @@ void KeyEditorModel::select(const QList<Note*>& notes, SelectionOperation operat
 void KeyEditorModel::selectRange(int startTick, int endTick, int lowPitch, int highPitch,
                                  SelectionOperation operation)
       {
-      QList<Note*> notes;
-      for (int index : notesInRange(startTick, endTick, lowPitch, highPitch))
-            notes.append(_notes[index].note);
-      select(notes, operation);
+      selectEvents(notesInRange(startTick, endTick, lowPitch, highPitch), operation);
       }
 
 void KeyEditorModel::selectAllVisible()
       {
-      QList<Note*> notes;
-      for (const NoteBlock& block : _notes)
-            notes.append(block.note);
-      select(notes, SelectionOperation::Replace);
+      QVector<int> indexes;
+      indexes.reserve(_notes.size());
+      for (int i = 0; i < _notes.size(); ++i)
+            indexes.append(i);
+      selectEvents(indexes, SelectionOperation::Replace);
       }
 
 void KeyEditorModel::clearSelection()
       {
-      select(QList<Note*>(), SelectionOperation::Replace);
+      selectEvents(QVector<int>(), SelectionOperation::Replace);
       }
 
 KeyEditorModel::NoteSnapshot KeyEditorModel::snapshot(Note* original) const
@@ -1191,93 +1328,73 @@ bool KeyEditorModel::applyNoteEdits(const QVector<NoteEdit>& edits, bool duplica
       return true;
       }
 
-bool KeyEditorModel::applyPlaybackTimingEdits(const QVector<NoteEdit>& edits)
+bool KeyEditorModel::applyPlaybackTimingEdits(const QVector<NoteEdit>& edits, bool duplicate)
       {
       if (!_score || edits.isEmpty())
             return false;
-
-      struct TimingChange {
-            Note* root { nullptr };
-            int ontime { 0 };
-            int length { NoteEvent::NOTE_LENGTH };
-            int pitch { 60 };
-            };
-      QVector<TimingChange> changes;
-      QSet<Note*> seen;
+      QHash<Note*, NoteEventList> replacements;
+      QHash<Note*, QVector<int> > addedIndexes;
       bool changed = false;
       for (const NoteEdit& edit : edits) {
-            Note* root = rootNote(edit.source);
-            if (!root || !root->chord() || seen.contains(root))
+            Note* source = edit.source;
+            if (!source || !source->chord() || edit.eventIndex < 0
+                || edit.eventIndex >= source->playEvents().size())
                   continue;
-            seen.insert(root);
-            if (edit.staffIdx != root->staffIdx() || edit.voice != root->voice())
+            if (edit.staffIdx != source->staffIdx() || edit.voice != source->voice())
                   return false;
             const int desiredStart = qMax(0, edit.startTick);
             const int desiredEnd = qMax(desiredStart + 1, edit.endTick);
-            Chord* anchor = playbackAnchor(root);
+            Chord* anchor = playbackAnchor(source);
             if (!anchor)
                   continue;
             const int rootTicks = qMax(1, anchor->actualTicks().ticks());
             const int ontime = qRound(qreal(desiredStart - anchor->tick().ticks())
                                       * NoteEvent::NOTE_LENGTH / rootTicks);
-            const int length = qMax(1, qRound(qreal(desiredEnd - desiredStart)
+            // The renderer appends simple tied continuations to the final
+            // event automatically. The block's visible duration already
+            // contains that tail, so do not write it into the source event a
+            // second time or every resize compounds the tie duration.
+            const int editableTicks = qMax(1, desiredEnd - desiredStart
+                                              - playbackTieTail(source, edit.eventIndex));
+            const int length = qMax(1, qRound(qreal(editableTicks)
                                               * NoteEvent::NOTE_LENGTH / rootTicks));
-            int currentStart = 0;
-            int currentEnd = 1;
-            playbackBounds(root, currentStart, currentEnd);
-            const int pitch = qBound(0, edit.pitch, 127);
-            changed = changed || currentStart != desiredStart || currentEnd != desiredEnd
-                    || root->pitch() != pitch;
-            changes.append({ root, ontime, length, pitch });
+            NoteEventList list = replacements.contains(source)
+                               ? replacements.value(source) : source->playEvents();
+            NoteEvent event = list[edit.eventIndex];
+            const int pitchOffset = qBound(-127, edit.pitch - source->ppitch(), 127);
+            if (duplicate) {
+                  event.setOntime(ontime);
+                  event.setLen(length);
+                  event.setPitch(pitchOffset);
+                  addedIndexes[source].append(list.size());
+                  list.append(event);
+                  changed = true;
+                  }
+            else if (event.ontime() != ontime || event.len() != length
+                     || event.pitch() != pitchOffset) {
+                  event.setOntime(ontime);
+                  event.setLen(length);
+                  event.setPitch(pitchOffset);
+                  list[edit.eventIndex] = event;
+                  changed = true;
+                  }
+            replacements.insert(source, list);
             }
-      if (!changed || changes.isEmpty())
+      if (!changed || replacements.isEmpty())
             return false;
-
-      auto changeLinkedEvents = [](Note* note, const NoteEventList& events) {
-            if (!note)
-                  return;
-            QSet<Note*> linkedSeen;
-            for (ScoreElement* linkedElement : note->linkList()) {
-                  if (!linkedElement || linkedElement->type() != ElementType::NOTE)
-                        continue;
-                  Note* linkedNote = toNote(linkedElement);
-                  if (!linkedNote->score() || linkedSeen.contains(linkedNote))
-                        continue;
-                  linkedSeen.insert(linkedNote);
-                  NoteEventList linkedEvents = events;
-                  linkedNote->score()->undo(new ChangeNoteEventList(linkedNote, linkedEvents));
-                  }
-            };
-
       _score->startCmd();
-      for (const TimingChange& change : qAsConst(changes)) {
-            Note* fragment = change.root;
-            QSet<Note*> chainSeen;
-            bool first = true;
-            while (fragment && !chainSeen.contains(fragment)) {
-                  chainSeen.insert(fragment);
-                  NoteEventList events;
-                  events.append(NoteEvent(0, first ? change.ontime : 0,
-                                          first ? change.length : 0));
-                  changeLinkedEvents(fragment, events);
-                  if (fragment->pitch() != change.pitch) {
-                        for (ScoreElement* linkedElement : fragment->linkList()) {
-                              if (!linkedElement || linkedElement->type() != ElementType::NOTE)
-                                    continue;
-                              Note* linkedNote = toNote(linkedElement);
-                              if (linkedNote->pitch() != change.pitch) {
-                                    linkedNote->score()->undoChangePitch(linkedNote, change.pitch,
-                                          linkedNote->tpc1default(change.pitch),
-                                          linkedNote->tpc2default(change.pitch));
-                                    }
-                              }
-                        }
-                  first = false;
-                  fragment = fragment->tieFor() ? fragment->tieFor()->endNote() : nullptr;
-                  }
+      for (auto it = replacements.begin(); it != replacements.end(); ++it) {
+            undoEventListForLinkedNotes(it.key(), it.value());
             }
       _score->endCmd();
       rebuild();
+      if (duplicate) {
+            _selectedEvents.clear();
+            for (auto it = addedIndexes.constBegin(); it != addedIndexes.constEnd(); ++it) {
+                  for (int eventIndex : it.value())
+                        _selectedEvents.insert(eventKey(it.key(), eventIndex));
+                  }
+            }
       emit selectionChanged();
       return true;
       }
@@ -1326,7 +1443,33 @@ bool KeyEditorModel::deleteNotes(const QList<Note*>& notes)
 
 bool KeyEditorModel::deleteSelection()
       {
-      return deleteNotes(selectedRootNotes());
+      if (!_score)
+            return false;
+      QHash<Note*, QVector<int> > removals;
+      for (int blockIndex : selectedEventIndexes()) {
+            const NoteBlock& block = _notes[blockIndex];
+            if (block.note && block.eventIndex >= 0)
+                  removals[block.note].append(block.eventIndex);
+            }
+      if (removals.isEmpty())
+            return false;
+      _score->startCmd();
+      for (auto it = removals.begin(); it != removals.end(); ++it) {
+            NoteEventList list = it.key()->playEvents();
+            QVector<int> indexes = it.value();
+            std::sort(indexes.begin(), indexes.end(), std::greater<int>());
+            indexes.erase(std::unique(indexes.begin(), indexes.end()), indexes.end());
+            for (int index : qAsConst(indexes)) {
+                  if (index >= 0 && index < list.size())
+                        list.removeAt(index);
+                  }
+            undoEventListForLinkedNotes(it.key(), list);
+            }
+      _selectedEvents.clear();
+      _score->endCmd();
+      rebuild();
+      emit selectionChanged();
+      return true;
       }
 
 bool KeyEditorModel::setSelectionVoice(int voice)
@@ -1381,40 +1524,79 @@ bool KeyEditorModel::setVelocities(const QHash<Note*, int>& velocities)
       return true;
       }
 
+bool KeyEditorModel::setEventVelocities(const QHash<int, int>& velocities)
+      {
+      if (!_score || velocities.isEmpty())
+            return false;
+      QHash<Note*, NoteEventList> replacements;
+      bool changed = false;
+      for (auto it = velocities.constBegin(); it != velocities.constEnd(); ++it) {
+            const int blockIndex = it.key();
+            if (blockIndex < 0 || blockIndex >= _notes.size())
+                  continue;
+            const NoteBlock& block = _notes[blockIndex];
+            Note* note = block.note;
+            if (!note || block.eventIndex < 0 || block.eventIndex >= note->playEvents().size())
+                  continue;
+            NoteEventList list = replacements.contains(note)
+                               ? replacements.value(note) : note->playEvents();
+            const int value = qBound(1, it.value(), 127);
+            if (list[block.eventIndex].velocity() != value) {
+                  list[block.eventIndex].setVelocity(value);
+                  changed = true;
+                  }
+            replacements.insert(note, list);
+            }
+      if (!changed)
+            return false;
+      _score->startCmd();
+      for (auto it = replacements.begin(); it != replacements.end(); ++it) {
+            undoEventListForLinkedNotes(it.key(), it.value());
+            }
+      _score->endCmd();
+      rebuild();
+      emit selectionChanged();
+      return true;
+      }
+
 bool KeyEditorModel::setSelectionEventTiming(int value, bool changeOntime)
       {
       if (!_score)
             return false;
-      const QList<Note*> selected = selectedRootNotes();
+      const QVector<int> selected = selectedEventIndexes();
       if (selected.isEmpty())
             return false;
-      for (Note* note : selected) {
-            if (!note || note->playEvents().size() != 1)
-                  return false;
-            }
-
+      QHash<Note*, NoteEventList> replacements;
       bool changed = false;
-      _score->startCmd();
-      for (Note* note : selected) {
-            NoteEvent* event = &note->playEvents().front();
-            NoteEvent replacement = *event;
+      for (int blockIndex : selected) {
+            const NoteBlock& block = _notes[blockIndex];
+            Note* note = block.note;
+            if (!note || block.eventIndex < 0 || block.eventIndex >= note->playEvents().size())
+                  continue;
+            NoteEventList list = replacements.contains(note)
+                               ? replacements.value(note) : note->playEvents();
+            NoteEvent& event = list[block.eventIndex];
             if (changeOntime) {
-                  if (event->ontime() == value)
+                  if (event.ontime() == value)
                         continue;
-                  replacement.setOntime(value);
+                  event.setOntime(value);
                   }
             else {
                   const int length = qMax(1, value);
-                  if (event->len() == length)
+                  if (event.len() == length)
                         continue;
-                  replacement.setLen(length);
+                  event.setLen(length);
                   }
-            _score->undo(new ChangeNoteEvent(note, event, replacement));
+            replacements.insert(note, list);
             changed = true;
             }
-      _score->endCmd(!changed);
       if (!changed)
             return false;
+      _score->startCmd();
+      for (auto it = replacements.begin(); it != replacements.end(); ++it) {
+            undoEventListForLinkedNotes(it.key(), it.value());
+            }
+      _score->endCmd();
       rebuild();
       emit selectionChanged();
       return true;
@@ -1422,7 +1604,6 @@ bool KeyEditorModel::setSelectionEventTiming(int value, bool changeOntime)
 
 bool KeyEditorModel::setNoteEventTiming(Note* note, int eventIndex, int value, bool changeOntime)
       {
-      note = rootNote(note);
       if (!_score || !note || eventIndex < 0 || eventIndex >= note->playEvents().size())
             return false;
       NoteEvent* event = &note->playEvents()[eventIndex];
@@ -1448,10 +1629,10 @@ bool KeyEditorModel::setNoteEventTiming(Note* note, int eventIndex, int value, b
 
 bool KeyEditorModel::setSelectionVelocity(int velocity)
       {
-      QHash<Note*, int> values;
-      for (Note* note : selectedRootNotes())
-            values.insert(note, velocity);
-      return setVelocities(values);
+      QHash<int, int> values;
+      for (int index : selectedEventIndexes())
+            values.insert(index, velocity);
+      return setEventVelocities(values);
       }
 
 bool KeyEditorModel::quantizeSelection(int gridTicks)
@@ -1459,24 +1640,24 @@ bool KeyEditorModel::quantizeSelection(int gridTicks)
       if (gridTicks <= 0)
             return false;
       QVector<NoteEdit> edits;
-      for (Note* note : selectedRootNotes()) {
-            const NoteBlock& block = _notes[_noteLookup.value(note)];
+      for (int index : selectedEventIndexes()) {
+            const NoteBlock& block = _notes[index];
             const int start = qMax(0, int(std::floor((block.startTick + gridTicks / 2.0) / gridTicks)) * gridTicks);
-            edits.append({ note, start, start + (block.endTick - block.startTick), block.pitch,
-                           block.staffIdx, block.voice });
+            edits.append({ block.note, start, start + (block.endTick - block.startTick), block.pitch,
+                           block.staffIdx, block.voice, block.eventIndex });
             }
-      return applyNoteEdits(edits, false);
+      return applyPlaybackTimingEdits(edits);
       }
 
 bool KeyEditorModel::nudgeSelection(int tickDelta, int pitchDelta, bool duplicate)
       {
       QVector<NoteEdit> edits;
       int minimumStart = INT_MAX;
-      for (Note* note : selectedRootNotes()) {
-            const NoteBlock& block = _notes[_noteLookup.value(note)];
+      for (int index : selectedEventIndexes()) {
+            const NoteBlock& block = _notes[index];
             minimumStart = qMin(minimumStart, block.startTick);
-            edits.append({ note, block.startTick + tickDelta, block.endTick + tickDelta,
-                           block.pitch + pitchDelta, block.staffIdx, block.voice });
+            edits.append({ block.note, block.startTick + tickDelta, block.endTick + tickDelta,
+                           block.pitch + pitchDelta, block.staffIdx, block.voice, block.eventIndex });
             }
       if (minimumStart != INT_MAX && minimumStart + tickDelta < 0) {
             const int correction = -(minimumStart + tickDelta);
@@ -1485,7 +1666,7 @@ bool KeyEditorModel::nudgeSelection(int tickDelta, int pitchDelta, bool duplicat
                   edit.endTick += correction;
                   }
             }
-      return applyNoteEdits(edits, duplicate);
+      return applyPlaybackTimingEdits(edits, duplicate);
       }
 
 QByteArray KeyEditorModel::encodeSnapshots(const QVector<NoteSnapshot>& snapshots) const

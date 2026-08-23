@@ -14,6 +14,7 @@
 #include <QHash>
 #include <QList>
 #include <QSet>
+#include <QString>
 #include <QVector>
 
 namespace Ms {
@@ -72,6 +73,7 @@ class KeyEditorModel : public QObject
             int pitch { 60 };
             int staffIdx { 0 };
             int voice { 0 };
+            int eventIndex { -1 };
             };
 
    private:
@@ -109,13 +111,18 @@ class KeyEditorModel : public QObject
       QVector<PedalBlock> _pedals;
       QHash<int, QVector<int> > _timeBuckets;
       QHash<Note*, int> _noteLookup;
+      QSet<QString> _selectedEvents;
       int _scoreEndTick { 0 };
       int _bucketTicks { 1920 };
       bool _rebuilding { false };
+      bool _projectionUpdatesSuspended { false };
+      bool _projectionRebuildPending { false };
 
       Note* rootNote(Note*) const;
+      QString eventKey(Note*, int eventIndex) const;
       Chord* playbackAnchor(Note*) const;
       QSet<Note*> tieChain(Note*) const;
+      int playbackTieTail(Note*, int eventIndex) const;
       bool playbackBounds(Note*, int& startTick, int& endTick) const;
       NoteSnapshot snapshot(Note*) const;
       bool usesUserEventsAt(const NoteSnapshot&, int relativeTick) const;
@@ -147,6 +154,7 @@ class KeyEditorModel : public QObject
       void clear();
       void invalidateProjection();
       void invalidateElement(Element*);
+      void setProjectionUpdatesSuspended(bool);
       void rebuild();
       void syncSelection();
 
@@ -160,24 +168,30 @@ class KeyEditorModel : public QObject
       QVector<int> notesInRange(int startTick, int endTick, int lowPitch, int highPitch) const;
       int noteAt(int tick, int pitch) const;
       int noteIndex(Note*) const;
+      int noteIndex(Note*, int eventIndex) const;
+      bool eventSelected(int noteIndex) const;
+      bool eventSelected(Note*, int eventIndex) const;
       bool noteSelected(Note*) const;
+      QVector<int> selectedEventIndexes() const;
       QList<Note*> selectedNotes() const;
       int effectiveVelocity(Note*) const;
 
       void select(const QList<Note*>&, SelectionOperation);
+      void selectEvents(const QVector<int>&, SelectionOperation);
       void selectRange(int startTick, int endTick, int lowPitch, int highPitch,
                        SelectionOperation operation);
       void selectAllVisible();
       void clearSelection();
 
       bool applyNoteEdits(const QVector<NoteEdit>&, bool duplicate);
-      bool applyPlaybackTimingEdits(const QVector<NoteEdit>&);
+      bool applyPlaybackTimingEdits(const QVector<NoteEdit>&, bool duplicate = false);
       bool createNote(int startTick, int durationTicks, int pitch, int staffIdx, int voice);
       bool deleteSelection();
       bool deleteNotes(const QList<Note*>&);
       bool setSelectionVoice(int voice);
       bool setSelectionVelocity(int velocity);
       bool setVelocities(const QHash<Note*, int>& velocities);
+      bool setEventVelocities(const QHash<int, int>& velocities);
       bool setSelectionEventTiming(int value, bool changeOntime);
       bool setNoteEventTiming(Note*, int eventIndex, int value, bool changeOntime);
       bool quantizeSelection(int gridTicks);

@@ -142,6 +142,18 @@ PianorollEditor::PianorollEditor(QWidget* parent)
                         play->trigger();
                   }
             });
+      if (seq) {
+            connect(seq, &Seq::started, this, [this]() {
+                  _model->setProjectionUpdatesSuspended(true);
+                  });
+            connect(seq, &Seq::stopped, this, [this]() {
+                  const bool deferred = _rebuildDeferredForPlayback;
+                  _rebuildDeferredForPlayback = false;
+                  _model->setProjectionUpdatesSuspended(false);
+                  if (deferred)
+                        scheduleRebuild();
+                  });
+            }
       connect(_view, &KeyEditorView::noteFocusRequested, this, [this](Note* note) {
             _selectionFromPianoRoll = true;
             focusScoreOnNote(note);
@@ -477,6 +489,7 @@ void PianorollEditor::updateScope()
       _editTargetSelector->setVisible(allTracks);
       _editTargetSelector->setEnabled(allTracks);
       _view->setEditStaffIdx(editStaff->idx());
+      _model->setProjectionUpdatesSuspended(seq && seq->isPlaying());
       _model->setContext(editStaff, visible);
       updateWindowTitle();
       updateSelectionFields();
@@ -556,13 +569,10 @@ void PianorollEditor::editToolChanged(int tool)
 QVector<KeyEditorModel::NoteEdit> PianorollEditor::selectedEdits() const
       {
       QVector<KeyEditorModel::NoteEdit> edits;
-      for (Note* note : _model->selectedNotes()) {
-            const int index = _model->noteIndex(note);
-            if (index < 0)
-                  continue;
+      for (int index : _model->selectedEventIndexes()) {
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
-            edits.append({ note, block.startTick, block.endTick, block.pitch,
-                           block.staffIdx, block.voice });
+            edits.append({ block.note, block.startTick, block.endTick, block.pitch,
+                           block.staffIdx, block.voice, block.eventIndex });
             }
       return edits;
       }
@@ -610,17 +620,11 @@ void PianorollEditor::focusSelectedNoteInPianoRoll()
 void PianorollEditor::updateSelectionFields()
       {
       const QVector<KeyEditorModel::NoteEdit> edits = selectedEdits();
-      const QList<Note*> selected = _model->selectedNotes();
       const bool enabled = !edits.isEmpty();
       _velocityField->setEnabled(enabled);
-      bool singleEvents = enabled;
-      for (Note* note : selected)
-            singleEvents = singleEvents && note && note->playEvents().size() == 1;
-      _onTimeField->setEnabled(singleEvents);
-      _eventLengthField->setEnabled(singleEvents);
-      const QString eventTip = singleEvents
-            ? tr("Playback event value for the selected notes")
-            : tr("Use the event lane to edit multi-event ornaments individually");
+      _onTimeField->setEnabled(enabled);
+      _eventLengthField->setEnabled(enabled);
+      const QString eventTip = tr("Playback event value for the selected MIDI events");
       _onTimeField->setToolTip(eventTip);
       _eventLengthField->setToolTip(eventTip);
       if (!enabled) {
@@ -633,20 +637,27 @@ void PianorollEditor::updateSelectionFields()
       QSet<int> staves;
       for (const KeyEditorModel::NoteEdit& edit : edits)
             staves.insert(edit.staffIdx);
-      const int firstVelocity = _model->effectiveVelocity(selected.front());
+      const KeyEditorModel::NoteBlock& firstBlock =
+            _model->notes()[_model->selectedEventIndexes().front()];
+      const int firstVelocity = firstBlock.velocity;
       bool mixedVelocity = false;
+      bool mixedOnTime = false;
+      bool mixedLength = false;
       for (int i = 0; i < edits.size(); ++i) {
-            mixedVelocity = mixedVelocity
-                         || _model->effectiveVelocity(edits[i].source) != firstVelocity;
+            const int index = _model->noteIndex(edits[i].source, edits[i].eventIndex);
+            if (index < 0)
+                  continue;
+            const KeyEditorModel::NoteBlock& block = _model->notes()[index];
+            mixedVelocity = mixedVelocity || block.velocity != firstVelocity;
+            mixedOnTime = mixedOnTime || block.ontime != firstBlock.ontime;
+            mixedLength = mixedLength || block.eventLength != firstBlock.eventLength;
             }
       QSignalBlocker velocityBlock(_velocityField);
       QSignalBlocker onTimeBlock(_onTimeField);
       QSignalBlocker eventLengthBlock(_eventLengthField);
       _velocityField->setValue(firstVelocity);
-      if (singleEvents) {
-            _onTimeField->setValue(selected.front()->playEvents().front().ontime());
-            _eventLengthField->setValue(selected.front()->playEvents().front().len());
-            }
+      _onTimeField->setValue(firstBlock.ontime);
+      _eventLengthField->setValue(firstBlock.eventLength);
       auto setMixedDisplay = [this](QSpinBox* field, bool mixed) {
             if (QLineEdit* editor = field->findChild<QLineEdit*>()) {
                   editor->setPlaceholderText(mixed ? tr("Mixed") : QString());
@@ -655,6 +666,8 @@ void PianorollEditor::updateSelectionFields()
                   }
             };
       setMixedDisplay(_velocityField, mixedVelocity);
+      setMixedDisplay(_onTimeField, mixedOnTime);
+      setMixedDisplay(_eventLengthField, mixedLength);
       _selectionSummary->setText(edits.size() == 1
             ? tr("1 note") : tr("%1 notes · %2 staffs").arg(edits.size()).arg(staves.size()));
       _velocityDirty = false;
@@ -791,6 +804,11 @@ void PianorollEditor::scheduleRebuild()
 void PianorollEditor::doRebuild()
       {
       _updateScheduled = false;
+      if (seq && seq->isPlaying()) {
+            _rebuildDeferredForPlayback = true;
+            _model->setProjectionUpdatesSuspended(true);
+            return;
+            }
       if (_score) {
             if (!_staff || !_score->staves().contains(_staff)) {
                   setStaff(_score->nstaves() ? _score->staff(0) : nullptr);

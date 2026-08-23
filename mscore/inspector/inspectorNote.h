@@ -36,6 +36,13 @@ class InspectorNote : public InspectorElementBase {
       QWidget* acciaccaturaWidget { nullptr };
 
       void block(bool);
+      bool hasRawVelocity() const;
+      void updateRawVelocityControls();
+      void changeRawVelocity(int);
+      void clearRawVelocity();
+
+   protected slots:
+      void valueChanged(int idx, bool reset) override;
 
    private slots:
       void noteHeadSchemeChanged(int val);

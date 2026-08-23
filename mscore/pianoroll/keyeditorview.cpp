@@ -84,7 +84,7 @@ void KeyEditorView::setModel(KeyEditorModel* model)
             connect(_model, &KeyEditorModel::modelReset, this, [this]() {
                   _selectedPedal = nullptr;
                   _previewEdits.clear();
-                  _previewSources.clear();
+                  _previewBlockIndexes.clear();
                   _velocityPreview.clear();
                   updateScrollBars();
                   viewport()->update();
@@ -251,7 +251,7 @@ QRectF KeyEditorView::editRect(const KeyEditorModel::NoteEdit& edit) const
       const qreal x2 = tickToX(edit.endTick);
       qreal y = pitchToY(edit.pitch) + 1;
       qreal height = qMax(3, _keyHeight - 2);
-      const int index = _model ? _model->noteIndex(edit.source) : -1;
+      const int index = _model ? _model->noteIndex(edit.source, edit.eventIndex) : -1;
       if (index >= 0 && _model->notes()[index].overlap && _model->visibleStaves().size() > 1) {
             const int count = _model->visibleStaves().size();
             int row = 0;
@@ -388,19 +388,16 @@ QRect KeyEditorView::velocitySelectionRect() const
       {
       if (!_model || _laneMode != LaneMode::Velocity)
             return QRect();
-      const QList<Note*> selected = _model->selectedNotes();
+      const QVector<int> selected = _model->selectedEventIndexes();
       if (selected.size() < 2)
             return QRect();
       int left = INT_MAX;
       int right = INT_MIN;
       int top = INT_MAX;
-      for (Note* note : selected) {
-            const int index = _model->noteIndex(note);
-            if (index < 0)
-                  continue;
+      for (int index : selected) {
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
             const int x = velocityHandleX(block);
-            const int value = _velocityPreview.value(note, _model->effectiveVelocity(note));
+            const int value = _velocityPreview.value(index, block.velocity);
             left = qMin(left, x);
             right = qMax(right, x);
             top = qMin(top, velocityToY(value));
@@ -437,14 +434,14 @@ KeyEditorView::DragMode KeyEditorView::velocitySelectionHandleAt(const QPoint& p
       return DragMode::None;
       }
 
-QRegion KeyEditorView::velocityGestureRegion(const QHash<Note*, int>& values) const
+QRegion KeyEditorView::velocityGestureRegion(const QHash<int, int>& values) const
       {
       QRegion region;
       if (!_model)
             return region;
       const int baseline = velocityToY(1);
       for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
-            const int index = _model->noteIndex(it.key());
+            const int index = it.key();
             if (index < 0)
                   continue;
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
@@ -805,7 +802,8 @@ void KeyEditorView::paintNote(QPainter& painter, const QRectF& rect,
       {
       QColor fill = noteColor(block.staffIdx, block.voice);
       fill.setAlphaF(qBound<qreal>(0.0, alpha, 1.0));
-      const bool selected = block.note && _model && _model->noteSelected(block.note);
+      const bool selected = block.note && _model
+                         && _model->eventSelected(block.note, block.eventIndex);
       const QColor originalColor = fill;
       QColor outline = selected ? originalColor : fill.darker(180);
       QColor selectedFill(
@@ -846,14 +844,14 @@ void KeyEditorView::paintNotes(QPainter& painter, const QRect& dirty)
                                                         yToPitch(area.bottom()), yToPitch(area.top()));
       for (int index : visible) {
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
-            if (!_duplicateDrag && _previewSources.contains(block.note))
+            if (!_duplicateDrag && _previewBlockIndexes.contains(index))
                   continue;
             const QRectF rect = noteRect(block);
             if (rect.intersects(area))
                   paintNote(painter, rect, block);
             }
       for (const KeyEditorModel::NoteEdit& edit : _previewEdits) {
-            const int sourceIndex = _model->noteIndex(edit.source);
+            const int sourceIndex = _model->noteIndex(edit.source, edit.eventIndex);
             if (sourceIndex < 0)
                   continue;
             KeyEditorModel::NoteBlock preview = _model->notes()[sourceIndex];
@@ -933,18 +931,14 @@ void KeyEditorView::paintControllerLane(QPainter& painter, const QRect& dirty)
                   }
             const int baseline = velocityToY(1);
             const QVector<int> visible = _model->notesInRange(xToTick(lane.left()), xToTick(lane.right()), 0, 127);
-            QSet<Note*> painted;
             QVector<QRect> valueLabels;
             for (int index : visible) {
                   const KeyEditorModel::NoteBlock& block = _model->notes()[index];
-                  if (painted.contains(block.note))
-                        continue;
-                  painted.insert(block.note);
                   const int x = velocityHandleX(block);
-                  const int value = _velocityPreview.value(block.note, block.velocity);
+                  const int value = _velocityPreview.value(index, block.velocity);
                   const int y = velocityToY(value);
                   QColor color = noteColor(block.staffIdx, block.voice);
-                  const bool selected = _model->noteSelected(block.note);
+                  const bool selected = _model->eventSelected(index);
                   if (!selected)
                         color.setAlpha(165);
                   painter.setPen(QPen(color, selected ? 3.2 : 1.4));
@@ -1221,10 +1215,10 @@ void KeyEditorView::cancelActiveGesture()
       _lastDragPreviewPitch = -1;
       _originalEdits.clear();
       _previewEdits.clear();
-      _previewSources.clear();
+      _previewBlockIndexes.clear();
       _velocityOriginal.clear();
       _velocityPreview.clear();
-      _velocityAnchor = nullptr;
+      _velocityAnchor = -1;
       _velocityTransformRect = QRect();
       _marquee = QRect();
       setEditTool(_editTool);
@@ -1373,7 +1367,7 @@ void KeyEditorView::updateCursorForPosition(const QPoint& point)
                       || boxHandle == DragMode::VelocityBoxRight)
                         viewport()->setCursor(Qt::SizeBDiagCursor);
                   else if (boxHandle == DragMode::VelocityBoxUniform
-                           || (_laneTool == LaneTool::Pointer && velocityHandleAt(point)))
+                           || (_laneTool == LaneTool::Pointer && velocityHandleAt(point) >= 0))
                         viewport()->setCursor(Qt::SizeVerCursor);
                   else
                         viewport()->setCursor(Qt::CrossCursor);
@@ -1415,22 +1409,23 @@ void KeyEditorView::updateCursorForPosition(const QPoint& point)
       viewport()->setCursor(Qt::ArrowCursor);
       }
 
-void KeyEditorView::selectNoteForClick(Note* note, Qt::KeyboardModifiers modifiers)
+void KeyEditorView::selectNoteForClick(int noteIndex, Qt::KeyboardModifiers modifiers)
       {
-      if (!_model || !note)
+      if (!_model || noteIndex < 0 || noteIndex >= _model->notes().size())
             return;
-      const bool wasSelected = note->selected();
+      Note* note = _model->notes()[noteIndex].note;
+      const bool wasSelected = _model->eventSelected(noteIndex);
       const bool willDeselect = wasSelected && (modifiers & Qt::ControlModifier);
       if (!wasSelected && _model->score())
             _model->score()->setPlayNote(true);
-      if (!(modifiers & Qt::ControlModifier) || !note->selected())
+      if (!(modifiers & Qt::ControlModifier) || !wasSelected)
             emit noteFocusRequested(note);
       if (modifiers & Qt::ControlModifier)
-            _model->select({ note }, KeyEditorModel::SelectionOperation::Toggle);
+            _model->selectEvents({ noteIndex }, KeyEditorModel::SelectionOperation::Toggle);
       else if (modifiers & Qt::ShiftModifier)
-            _model->select({ note }, KeyEditorModel::SelectionOperation::Add);
-      else if (!note->selected())
-            _model->select({ note }, KeyEditorModel::SelectionOperation::Replace);
+            _model->selectEvents({ noteIndex }, KeyEditorModel::SelectionOperation::Add);
+      else if (!wasSelected)
+            _model->selectEvents({ noteIndex }, KeyEditorModel::SelectionOperation::Replace);
       // A newly selected note is previewed by MuseScoreCore::endCmd(), exactly
       // like a score click. An already-selected note has no selection command,
       // so invoke the same MuseScore preview function directly.
@@ -1442,9 +1437,7 @@ bool KeyEditorView::commitNoteEdits(const QVector<KeyEditorModel::NoteEdit>& edi
       {
       if (!_model)
             return false;
-      if (!duplicate)
-            return _model->applyPlaybackTimingEdits(edits);
-      return _model->applyNoteEdits(edits, duplicate);
+      return _model->applyPlaybackTimingEdits(edits, duplicate);
       }
 
 bool KeyEditorView::nudgeSelection(int tickDelta, int pitchDelta, bool duplicate)
@@ -1456,14 +1449,12 @@ bool KeyEditorView::nudgeSelection(int tickDelta, int pitchDelta, bool duplicate
 
       QVector<KeyEditorModel::NoteEdit> edits;
       int minimumStart = INT_MAX;
-      for (Note* note : _model->selectedNotes()) {
-            const int index = _model->noteIndex(note);
-            if (index < 0)
-                  continue;
+      for (int index : _model->selectedEventIndexes()) {
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
             minimumStart = qMin(minimumStart, block.startTick);
-            edits.append({ note, block.startTick + tickDelta, block.endTick + tickDelta,
-                           block.pitch + pitchDelta, block.staffIdx, block.voice });
+            edits.append({ block.note, block.startTick + tickDelta, block.endTick + tickDelta,
+                           block.pitch + pitchDelta, block.staffIdx, block.voice,
+                           block.eventIndex });
             }
       if (minimumStart != INT_MAX && minimumStart + tickDelta < 0) {
             const int correction = -(minimumStart + tickDelta);
@@ -1480,15 +1471,12 @@ bool KeyEditorView::quantizeSelection()
       if (!_model || _gridTicks <= 0)
             return false;
       QVector<KeyEditorModel::NoteEdit> edits;
-      for (Note* note : _model->selectedNotes()) {
-            const int index = _model->noteIndex(note);
-            if (index < 0)
-                  continue;
+      for (int index : _model->selectedEventIndexes()) {
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
             const int start = qMax(0, int(std::floor((block.startTick + _gridTicks / 2.0)
                                                      / _gridTicks)) * _gridTicks);
-            edits.append({ note, start, start + block.endTick - block.startTick,
-                           block.pitch, block.staffIdx, block.voice });
+            edits.append({ block.note, start, start + block.endTick - block.startTick,
+                           block.pitch, block.staffIdx, block.voice, block.eventIndex });
             }
       return commitNoteEdits(edits);
       }
@@ -1499,7 +1487,7 @@ void KeyEditorView::beginNoteDrag(int noteIndex, const QPoint& point)
             return;
       const KeyEditorModel::NoteBlock& hit = _model->notes()[noteIndex];
       const QRectF hitRect = noteRect(hit);
-      if (!hit.note->selected())
+      if (!_model->eventSelected(noteIndex))
             return;
 
       const qreal edgeWidth = qMin<qreal>(7.0, qMax<qreal>(3.0, hitRect.width() / 4.0));
@@ -1512,21 +1500,19 @@ void KeyEditorView::beginNoteDrag(int noteIndex, const QPoint& point)
 
       _originalEdits.clear();
       _previewEdits.clear();
-      _previewSources.clear();
-      for (Note* note : _model->selectedNotes()) {
-            const int index = _model->noteIndex(note);
-            if (index < 0)
-                  continue;
+      _previewBlockIndexes.clear();
+      for (int index : _model->selectedEventIndexes()) {
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
             KeyEditorModel::NoteEdit edit;
             edit.source = block.note;
+            edit.eventIndex = block.eventIndex;
             edit.startTick = block.startTick;
             edit.endTick = block.endTick;
             edit.pitch = block.pitch;
             edit.staffIdx = block.staffIdx;
             edit.voice = block.voice;
             _originalEdits.append(edit);
-            _previewSources.insert(block.note);
+            _previewBlockIndexes.insert(index);
             }
       _previewEdits = _originalEdits;
       _noteDragAnchor = hit.note;
@@ -1631,7 +1617,7 @@ void KeyEditorView::finishNoteDrag()
             commitNoteEdits(_previewEdits, _duplicateDrag);
       _originalEdits.clear();
       _previewEdits.clear();
-      _previewSources.clear();
+      _previewBlockIndexes.clear();
       _noteDragAnchor = nullptr;
       _lastDragPreviewPitch = -1;
       _duplicateDrag = false;
@@ -1722,22 +1708,22 @@ void KeyEditorView::drawNoteAt(const QPoint& point, bool commit)
             }
       }
 
-Note* KeyEditorView::velocityHandleAt(const QPoint& point) const
+int KeyEditorView::velocityHandleAt(const QPoint& point) const
       {
       if (!_model)
-            return nullptr;
+            return -1;
       const int tickRadius = qMax(1, qRound(8.0 / _pixelsPerTick));
-      Note* best = nullptr;
+      int best = -1;
       int bestDistance = 1000;
       for (int index : _model->notesInRange(xToTick(point.x()) - tickRadius,
                                             xToTick(point.x()) + tickRadius, 0, 127)) {
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
             const int dx = velocityHandleX(block) - point.x();
-            const int value = _velocityPreview.value(block.note, block.velocity);
+            const int value = _velocityPreview.value(index, block.velocity);
             const int dy = velocityToY(value) - point.y();
             const int distance = dx * dx + dy * dy;
             if (distance <= 81 && distance < bestDistance) {
-                  best = block.note;
+                  best = index;
                   bestDistance = distance;
                   }
             }
@@ -1756,21 +1742,21 @@ void KeyEditorView::beginVelocityGesture(const QPoint& point)
       if (selectionHandle != DragMode::None) {
             _dragMode = selectionHandle;
             _velocityTransformRect = velocitySelectionRect();
-            for (Note* note : _model->selectedNotes())
-                  _velocityOriginal.insert(note, _model->effectiveVelocity(note));
+            for (int index : _model->selectedEventIndexes())
+                  _velocityOriginal.insert(index, _model->notes()[index].velocity);
             _velocityPreview = _velocityOriginal;
             return;
             }
       _velocityAnchor = velocityHandleAt(point);
-      if (_laneTool == LaneTool::Pointer && _velocityAnchor) {
+      if (_laneTool == LaneTool::Pointer && _velocityAnchor >= 0) {
             selectNoteForClick(_velocityAnchor, _pressModifiers);
-            if (!_velocityAnchor->selected())
+            if (!_model->eventSelected(_velocityAnchor))
                   return;
-            const QList<Note*> selected = _model->selectedNotes();
-            for (Note* note : selected)
-                  _velocityOriginal.insert(note, _model->effectiveVelocity(note));
+            const QVector<int> selected = _model->selectedEventIndexes();
+            for (int index : selected)
+                  _velocityOriginal.insert(index, _model->notes()[index].velocity);
             _velocityPreview = _velocityOriginal;
-            _pressVelocity = _model->effectiveVelocity(_velocityAnchor);
+            _pressVelocity = _model->notes()[_velocityAnchor].velocity;
             _dragMode = DragMode::VelocityHandle;
             }
       else if (_laneTool == LaneTool::Freehand) {
@@ -1805,7 +1791,7 @@ void KeyEditorView::updateVelocityFreehand(const QPoint& from, const QPoint& to)
                               : qBound<qreal>(0.0,
                                     (x - from.x()) / qreal(to.x() - from.x()), 1.0);
             const int y = qRound(from.y() + ratio * (to.y() - from.y()));
-            _velocityPreview.insert(block.note, yToVelocity(y));
+            _velocityPreview.insert(index, yToVelocity(y));
             }
       }
 
@@ -1824,7 +1810,7 @@ void KeyEditorView::updateVelocityLine(const QPoint& from, const QPoint& to)
                   continue;
             const qreal ratio = tick1 == tick0 ? 1.0 : (block.startTick - tick0) / qreal(tick1 - tick0);
             const int y = qRound(from.y() + ratio * (to.y() - from.y()));
-            _velocityPreview.insert(block.note, yToVelocity(y));
+            _velocityPreview.insert(index, yToVelocity(y));
             }
       }
 
@@ -1832,7 +1818,7 @@ void KeyEditorView::updateVelocityGesture(const QPoint& point)
       {
       if (!_model)
             return;
-      const QHash<Note*, int> oldPreview = _velocityPreview;
+      const QHash<int, int> oldPreview = _velocityPreview;
       const QPoint oldPoint = _lastPos;
       _dragThresholdPassed = _dragThresholdPassed
                           || QLineF(_pressPos, point).length() >= QApplication::startDragDistance();
@@ -1870,7 +1856,7 @@ void KeyEditorView::updateVelocityGesture(const QPoint& point)
                               continue;
                               }
                         qreal weight = 1.0;
-                        const int index = _model->noteIndex(it.key());
+                        const int index = it.key();
                         if (index >= 0) {
                               const int x = velocityHandleX(_model->notes()[index]);
                               const qreal position = qBound<qreal>(0.0,
@@ -1899,7 +1885,7 @@ void KeyEditorView::updateVelocityGesture(const QPoint& point)
                || _dragMode == DragMode::VelocityBoxRight) {
             dirty += controllerContentRect();
             }
-      if (_model->selectedNotes().size() >= 2)
+      if (_model->selectedEventIndexes().size() >= 2)
             dirty += controllerContentRect();
       if (!dirty.isEmpty())
             viewport()->update(dirty);
@@ -1910,10 +1896,10 @@ void KeyEditorView::finishVelocityGesture()
       const QRegion oldPreview = velocityGestureRegion(_velocityPreview);
       const bool clickDraw = _dragMode == DragMode::VelocityFreehand;
       if (_model && !_velocityPreview.isEmpty() && (_dragThresholdPassed || clickDraw))
-            _model->setVelocities(_velocityPreview);
+            _model->setEventVelocities(_velocityPreview);
       _velocityOriginal.clear();
       _velocityPreview.clear();
-      _velocityAnchor = nullptr;
+      _velocityAnchor = -1;
       _velocityTransformRect = QRect();
       if (!oldPreview.isEmpty())
             viewport()->update(oldPreview);
@@ -2108,8 +2094,10 @@ void KeyEditorView::mousePressEvent(QMouseEvent* event)
       _cursorTick = _pressTick;
       const int noteIndex = noteAtPoint(event->pos());
       if (_editTool == EditTool::Erase) {
-            if (noteIndex >= 0)
-                  _model->deleteNotes({ _model->notes()[noteIndex].note });
+            if (noteIndex >= 0) {
+                  _model->selectEvents({ noteIndex }, KeyEditorModel::SelectionOperation::Replace);
+                  _model->deleteSelection();
+                  }
             event->accept();
             return;
             }
@@ -2119,10 +2107,9 @@ void KeyEditorView::mousePressEvent(QMouseEvent* event)
             return;
             }
       if (noteIndex >= 0) {
-            Note* note = _model->notes()[noteIndex].note;
-            selectNoteForClick(note, event->modifiers());
-            if (note->selected())
-                  beginNoteDrag(_model->noteIndex(note), event->pos());
+            selectNoteForClick(noteIndex, event->modifiers());
+            if (_model->eventSelected(noteIndex))
+                  beginNoteDrag(noteIndex, event->pos());
             }
       else
             beginMarquee(event->pos());
@@ -2422,15 +2409,13 @@ void KeyEditorView::keyPressEvent(QKeyEvent* event)
             const int direction = event->key() == Qt::Key_Right ? 1 : -1;
             if (alt) {
                   QVector<KeyEditorModel::NoteEdit> edits;
-                  for (Note* note : _model->selectedNotes()) {
-                        const int index = _model->noteIndex(note);
-                        if (index < 0)
-                              continue;
+                  for (int index : _model->selectedEventIndexes()) {
                         const KeyEditorModel::NoteBlock& block = _model->notes()[index];
-                        edits.append({ note, block.startTick,
+                        edits.append({ block.note, block.startTick,
                                        qMax(block.startTick + 1,
                                             block.endTick + direction * (ctrl ? 1 : _gridTicks)),
-                                       block.pitch, block.staffIdx, block.voice });
+                                       block.pitch, block.staffIdx, block.voice,
+                                       block.eventIndex });
                         }
                   commitNoteEdits(edits);
                   }

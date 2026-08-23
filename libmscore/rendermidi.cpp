@@ -254,15 +254,18 @@ bool isGlissandoFor(const Note* note) {
 //   playNote
 //---------------------------------------------------------
 static void playNote(EventMap* events, const Note* note, int channel, int pitch,
-   int velo, int onTime, int offTime, int staffIdx)
+   int velo, int onTime, int offTime, int staffIdx, int noteEventIndex,
+   bool absoluteVelocity)
       {
       if (!note->play())
             return;
-      velo = note->customizeVelocity(velo);
+      if (!absoluteVelocity)
+            velo = note->customizeVelocity(velo);
       NPlayEvent ev(ME_NOTEON, channel, pitch, velo);
       ev.setOriginatingStaff(staffIdx);
       ev.setTuning(note->tuning());
       ev.setNote(note);
+      ev.setNoteEventIndex(noteEventIndex);
       if (offTime < onTime)
             offTime = onTime;
       events->insert(std::pair<int, NPlayEvent>(onTime, ev));
@@ -436,7 +439,10 @@ static void collectNote(EventMap* events, int channel, const Note* note, qreal v
                   }
 
             velo *= velocityMultiplier;
-            playNote(events, note, channel, p, qBound(1, velo, 127), on, off, staffIdx);
+            if (e.velocity() >= 0)
+                  velo = e.velocity();
+            playNote(events, note, channel, p, qBound(1, velo, 127), on, off,
+                     staffIdx, i, e.velocity() >= 0);
             }
 
       // Single-note dynamics

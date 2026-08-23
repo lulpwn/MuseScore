@@ -43,6 +43,7 @@ class PianorollEditor final : public QMainWindow, public MuseScoreView
       KeyEditorView* _view { nullptr };
       Pos _locators[3];
       bool _updateScheduled { false };
+      bool _rebuildDeferredForPlayback { false };
       int _auditionChannel { -1 };
       int _auditionPitch { -1 };
       bool _velocityDirty { false };

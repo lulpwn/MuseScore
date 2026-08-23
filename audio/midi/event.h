@@ -245,6 +245,7 @@ class PlayEvent : public MidiCoreEvent {
 
 class NPlayEvent : public PlayEvent {
       const Note* _note{nullptr};
+      int _noteEventIndex {-1};
       const Harmony* _harmony{nullptr};
       int _origin = -1;
       int _discard = 0;
@@ -259,6 +260,8 @@ class NPlayEvent : public PlayEvent {
 
       const Note* note() const            { return _note;    }
       void setNote(const Note* v)         { _note = v;       }
+      int noteEventIndex() const          { return _noteEventIndex; }
+      void setNoteEventIndex(int v)       { _noteEventIndex = v; }
       const Harmony* harmony() const      { return _harmony; }
       void setHarmony(const Harmony* v)   { _harmony = v;    }
 

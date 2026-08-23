@@ -23,6 +23,10 @@ endif (MINGW)
 if (MSVC)
       # MSVC recognizes a *.rc file and will invoke the resource compiler to link it
       set (resource_file ${PROJECT_SOURCE_DIR}/mscore/data/mscore.rc)
+      set (local_crash_handler_files
+            crashhandler.h
+            crashhandler_win.cpp
+            )
 endif ( MSVC )
 
 if (APPLE)
@@ -50,6 +54,7 @@ include_directories(
 
 add_executable(${ExecutableName}
       ${resource_file}
+      ${local_crash_handler_files}
       main.cpp
       modulessetup.cpp
       modulessetup.h
@@ -78,6 +83,10 @@ target_include_directories(mscore PRIVATE
       )
 
 target_link_libraries(mscore mscoreapp global)
+
+if (MSVC)
+      target_link_libraries(mscore dbghelp)
+endif (MSVC)
 
 
 if (APPLE)

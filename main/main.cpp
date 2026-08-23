@@ -22,6 +22,7 @@
 #include "modulessetup.h"
 
 #if (defined (_MSCVER) || defined (_MSC_VER))
+#include "crashhandler.h"
 #include <vector>
 #include <algorithm>
 #include <windows.h>
@@ -55,6 +56,9 @@ static void initResources()
 
 int main(int argc, char** argv)
       {
+#if (defined (_MSCVER) || defined (_MSC_VER))
+      Ms::installLocalCrashHandler();
+#endif
       // Force the 8-bit text encoding to UTF-8. This is the default encoding on all supported platforms except for MSVC under Windows, which
       // would otherwise default to the local ANSI code page and cause corruption of any non-ANSI Unicode characters in command-line arguments.
       QTextCodec::setCodecForLocale(QTextCodec::codecForName("UTF-8"));

@@ -19,12 +19,35 @@
 #include "libmscore/hook.h"
 #include "libmscore/tuplet.h"
 #include "libmscore/staff.h"
+#include "libmscore/noteevent.h"
+#include "libmscore/undo.h"
 #include "inspector.h"
 #include "inspectorNote.h"
 
 #include <array>
 
 namespace Ms {
+
+//---------------------------------------------------------
+//   undoRawVelocityForLinkedNotes
+//---------------------------------------------------------
+
+static void undoRawVelocityForLinkedNotes(Note* source, const NoteEventList& events)
+      {
+      if (!source)
+            return;
+      QSet<Note*> seen;
+      for (ScoreElement* linkedElement : source->linkList()) {
+            if (!linkedElement || linkedElement->type() != ElementType::NOTE)
+                  continue;
+            Note* linkedNote = toNote(linkedElement);
+            if (!linkedNote->score() || seen.contains(linkedNote))
+                  continue;
+            seen.insert(linkedNote);
+            NoteEventList linkedEvents = events;
+            linkedNote->score()->undo(new ChangeNoteEventList(linkedNote, linkedEvents));
+            }
+      }
 
 //---------------------------------------------------------
 //   InspectorNote
@@ -156,6 +179,13 @@ void InspectorNote::setElement()
       {
       Note* note = toNote(inspector->element());
 
+      // Set the appropriate range before the generic Inspector population;
+      // otherwise switching away from a raw-velocity note can clamp an Offset
+      // value to the previous User range.
+      n.velocity->blockSignals(true);
+      n.velocity->setRange(hasRawVelocity() ? 1 : -127, 127);
+      n.velocity->blockSignals(false);
+
       int i = note->dots().size();
       n.dot1->setEnabled(i > 0);
       n.dot2->setEnabled(i > 1);
@@ -187,6 +217,173 @@ void InspectorNote::setElement()
             n.fixedLine->setEnabled(false);
       if (!n.play->isChecked())
             n.playWidget->setVisible(false);
+
+      updateRawVelocityControls();
+      }
+
+//---------------------------------------------------------
+//   hasRawVelocity
+//---------------------------------------------------------
+
+bool InspectorNote::hasRawVelocity() const
+      {
+      if (!inspector || !inspector->el())
+            return false;
+      for (Element* element : *inspector->el()) {
+            if (!element || element->type() != ElementType::NOTE)
+                  continue;
+            for (const NoteEvent& event : toNote(element)->playEvents()) {
+                  if (event.velocity() >= 0)
+                        return true;
+                  }
+            }
+      return false;
+      }
+
+//---------------------------------------------------------
+//   updateRawVelocityControls
+//---------------------------------------------------------
+
+void InspectorNote::updateRawVelocityControls()
+      {
+      if (!hasRawVelocity()) {
+            n.velocity->setRange(-127, 127);
+            n.velocity->setToolTip(QString());
+            return;
+            }
+
+      int velocity = -1;
+      bool mixed = false;
+      for (Element* element : *inspector->el()) {
+            if (!element || element->type() != ElementType::NOTE)
+                  continue;
+            const NoteEventList& events = toNote(element)->playEvents();
+            for (const NoteEvent& event : events) {
+                  if (event.velocity() < 0) {
+                        mixed = true;
+                        continue;
+                        }
+                  if (velocity < 0)
+                        velocity = event.velocity();
+                  else if (velocity != event.velocity())
+                        mixed = true;
+                  }
+            }
+
+      n.velocityType->blockSignals(true);
+      n.velocity->blockSignals(true);
+      n.velocityType->setCurrentIndex(1); // User: absolute raw MIDI velocity
+      n.velocity->setRange(1, 127);
+      n.velocity->setValue(qBound(1, velocity, 127));
+      n.velocity->setToolTip(mixed
+            ? tr("This note contains multiple raw MIDI velocities. Editing this value sets all of them.")
+            : tr("Absolute raw MIDI velocity shared with the piano roll."));
+      n.velocityType->blockSignals(false);
+      n.velocity->blockSignals(false);
+      n.resetVelocityType->setEnabled(true);
+      n.resetVelocity->setEnabled(true);
+      }
+
+//---------------------------------------------------------
+//   changeRawVelocity
+//---------------------------------------------------------
+
+void InspectorNote::changeRawVelocity(int velocity)
+      {
+      if (!inspector || !inspector->element())
+            return;
+      Score* score = inspector->element()->score();
+      if (!score)
+            return;
+
+      velocity = qBound(1, velocity, 127);
+      QHash<Note*, NoteEventList> replacements;
+      for (Element* element : *inspector->el()) {
+            if (!element || element->type() != ElementType::NOTE)
+                  continue;
+            Note* note = toNote(element);
+            NoteEventList events = note->playEvents();
+            bool changed = false;
+            for (NoteEvent& event : events) {
+                  if (event.velocity() != velocity) {
+                        event.setVelocity(velocity);
+                        changed = true;
+                        }
+                  }
+            if (changed)
+                  replacements.insert(note, events);
+            }
+      if (replacements.isEmpty())
+            return;
+
+      score->startCmd();
+      for (auto it = replacements.begin(); it != replacements.end(); ++it)
+            undoRawVelocityForLinkedNotes(it.key(), it.value());
+      inspector->setInspectorEdit(true);
+      score->endCmd();
+      inspector->setInspectorEdit(false);
+      }
+
+//---------------------------------------------------------
+//   clearRawVelocity
+//---------------------------------------------------------
+
+void InspectorNote::clearRawVelocity()
+      {
+      if (!inspector || !inspector->element())
+            return;
+      Score* score = inspector->element()->score();
+      if (!score)
+            return;
+
+      QHash<Note*, NoteEventList> replacements;
+      for (Element* element : *inspector->el()) {
+            if (!element || element->type() != ElementType::NOTE)
+                  continue;
+            Note* note = toNote(element);
+            NoteEventList events = note->playEvents();
+            bool changed = false;
+            for (NoteEvent& event : events) {
+                  if (event.velocity() >= 0) {
+                        event.setVelocity(-1);
+                        changed = true;
+                        }
+                  }
+            if (changed)
+                  replacements.insert(note, events);
+            }
+      if (replacements.isEmpty())
+            return;
+
+      score->startCmd();
+      for (auto it = replacements.begin(); it != replacements.end(); ++it)
+            undoRawVelocityForLinkedNotes(it.key(), it.value());
+      inspector->setInspectorEdit(true);
+      score->endCmd();
+      inspector->setInspectorEdit(false);
+      }
+
+//---------------------------------------------------------
+//   valueChanged
+//---------------------------------------------------------
+
+void InspectorNote::valueChanged(int idx, bool reset)
+      {
+      if (idx < 0 || idx >= int(iList.size()))
+            return;
+      const Pid id = iList[idx].t;
+      const bool rawVelocity = hasRawVelocity();
+
+      if (rawVelocity && (id == Pid::VELO_TYPE || id == Pid::VELO_OFFSET)) {
+            if (reset || (id == Pid::VELO_TYPE && n.velocityType->currentIndex() == 0))
+                  clearRawVelocity();
+            else
+                  changeRawVelocity(n.velocity->value());
+            setElement();
+            return;
+            }
+
+      InspectorElementBase::valueChanged(idx, reset);
       }
 
 //---------------------------------------------------------
