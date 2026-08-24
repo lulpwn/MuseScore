@@ -1525,36 +1525,73 @@ void renderTremolo(Chord* chord, QList<NoteEventList>& ell)
 //   renderArpeggio
 //---------------------------------------------------------
 
-void renderArpeggio(Chord *chord, QList<NoteEventList> & ell)
+static Arpeggio* spanningArpeggio(Chord* chord, Chord** ownerChord)
       {
-      int notes = int(chord->notes().size());
+      if (chord->arpeggio() && chord->arpeggio()->playArpeggio()) {
+            *ownerChord = chord;
+            return chord->arpeggio();
+            }
+
+      // In MuseScore 3, Arpeggio::span() counts staves and keeps the same
+      // voice on every staff.  Locate an arpeggio owned by a chord above this
+      // one so every covered chord receives its part of the shared roll.
+      const int voice = chord->voice();
+      const int track = chord->track();
+      const int firstTrack = chord->part()->startTrack() + voice;
+      for (int candidateTrack = track - VOICES; candidateTrack >= firstTrack; candidateTrack -= VOICES) {
+            Element* element = chord->segment()->element(candidateTrack);
+            if (!element || !element->isChord())
+                  continue;
+            Chord* candidate = toChord(element);
+            Arpeggio* arpeggio = candidate->arpeggio();
+            const int staffDistance = (track - candidateTrack) / VOICES;
+            if (arpeggio && arpeggio->playArpeggio() && arpeggio->span() > staffDistance) {
+                  *ownerChord = candidate;
+                  return arpeggio;
+                  }
+            }
+      return nullptr;
+      }
+
+void renderArpeggio(Chord* chord, Chord* ownerChord, Arpeggio* arpeggio, QList<NoteEventList>& ell)
+      {
+      QList<Note*> allNotes;
+      int shortestChordTicks = std::numeric_limits<int>::max();
+      for (int staffOffset = 0; staffOffset < arpeggio->span(); ++staffOffset) {
+            Element* element = ownerChord->segment()->element(ownerChord->track() + staffOffset * VOICES);
+            if (!element || !element->isChord())
+                  continue;
+            Chord* spannedChord = toChord(element);
+            shortestChordTicks = qMin(shortestChordTicks, qMax(1, spannedChord->upNote()->playTicks()));
+            for (Note* note : spannedChord->notes())
+                  allNotes.append(note);
+            }
+      std::stable_sort(allNotes.begin(), allNotes.end(), [](const Note* left, const Note* right) {
+            if (left->pitch() != right->pitch())
+                  return left->pitch() < right->pitch();
+            return left->track() < right->track();
+            });
+
+      const int notes = allNotes.size();
       if (notes <= 0)
             return;
-      Arpeggio* arpeggio = chord->arpeggio();
       const int chordTicks = qMax(1, chord->upNote()->playTicks());
       const int noteStepTicks = qMax(1, qRound((4.0 * DIVISION / arpeggio->noteDenominator()) * arpeggio->Stretch()));
       int spreadTicks = noteStepTicks * qMax(0, notes - 1);
       if (!arpeggio->playBeforeBeat())
-            spreadTicks = qMin(spreadTicks, chordTicks - 1);
-      int start, end, step;
+            spreadTicks = qMin(spreadTicks, shortestChordTicks - 1);
       bool up = arpeggio->arpeggioType() != ArpeggioType::DOWN && arpeggio->arpeggioType() != ArpeggioType::DOWN_STRAIGHT;
-      if (up) {
-            start = 0;
-            end   = notes;
-            step  = 1;
-            }
-      else {
-            start = notes - 1;
-            end   = -1;
-            step  = -1;
-            }
-      int j = 0;
       const EaseInOut curve(qreal(arpeggio->curveAmount()) / 100.0, 0.0);
-      for (int i = start; i != end; i += step) {
-            NoteEventList* events = &(ell)[i];
+      for (int i = 0; i < int(chord->notes().size()); ++i) {
+            Note* note = chord->notes()[i];
+            const int sortedIndex = allNotes.indexOf(note);
+            if (sortedIndex < 0)
+                  continue;
+            const int stepNumber = up ? sortedIndex : notes - sortedIndex - 1;
+            NoteEventList* events = &ell[i];
             events->clear();
 
-            const qreal linearPosition = notes == 1 ? 1.0 : qreal(j) / qreal(notes - 1);
+            const qreal linearPosition = notes == 1 ? 1.0 : qreal(stepNumber) / qreal(notes - 1);
             qreal position = linearPosition;
             if (arpeggio->curveType() == ArpeggioCurveType::CURVED) {
                   // Use MuseScore's existing ease-in transfer curve.  It maps
@@ -1572,7 +1609,6 @@ void renderArpeggio(Chord *chord, QList<NoteEventList> & ell)
             const int ot = onsetTicks < 0 ? qFloor(onsetPermille) : qCeil(onsetPermille);
 
             events->append(NoteEvent(0, ot, 1000 - ot));
-            j++;
             }
       }
 
@@ -2217,11 +2253,13 @@ static QList<NoteEventList> renderChord(Chord* chord, int gateTime, int ontime, 
             ell.append(NoteEventList());
 
       bool arpeggio = false;
+      Chord* arpeggioOwner = nullptr;
+      Arpeggio* spanningArp = spanningArpeggio(chord, &arpeggioOwner);
       if (chord->tremolo()) {
             renderTremolo(chord, ell);
             }
-      else if (chord->arpeggio() && chord->arpeggio()->playArpeggio()) {
-            renderArpeggio(chord, ell);
+      else if (spanningArp) {
+            renderArpeggio(chord, arpeggioOwner, spanningArp, ell);
             arpeggio = true;
             }
       else

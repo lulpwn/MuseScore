@@ -21,6 +21,7 @@
 #include "tourhandler.h"
 
 #include "libmscore/chord.h"
+#include "libmscore/arpeggio.h"
 #include "libmscore/clef.h"
 #include "libmscore/element.h"
 #include "libmscore/fret.h"
@@ -492,6 +493,55 @@ static void applyDrop(Score* score, ScoreView* viewer, Element* target, Element*
       }
 
 //---------------------------------------------------------
+//   applyCrossStaffArpeggio
+//   Apply one arpeggio to two simultaneous chords selected
+//   on different staves of the same instrument.
+//---------------------------------------------------------
+
+static bool applyCrossStaffArpeggio(Score* score, ScoreView* viewer, const Selection& selection,
+   Element* paletteElement, Qt::KeyboardModifiers modifiers)
+      {
+      if (paletteElement->type() != ElementType::ARPEGGIO)
+            return false;
+
+      QList<Chord*> chords;
+      for (Element* element : selection.elements()) {
+            Chord* chord = nullptr;
+            if (element->isNote())
+                  chord = toNote(element)->chord();
+            else if (element->isChord())
+                  chord = toChord(element);
+            if (chord && !chords.contains(chord))
+                  chords.append(chord);
+            }
+
+      if (chords.size() != 2)
+            return false;
+
+      Chord* top = chords.front();
+      Chord* bottom = chords.back();
+      if (top->staffIdx() > bottom->staffIdx())
+            std::swap(top, bottom);
+
+      // The existing MuseScore 3 arpeggio span is staff-based and follows
+      // the owning chord's voice on each staff.  Keep that representation so
+      // old scores and the existing layout/edit handles remain compatible.
+      if (top->staffIdx() == bottom->staffIdx()
+          || top->part() != bottom->part()
+          || top->segment() != bottom->segment()
+          || top->voice() != bottom->voice())
+            return false;
+
+      Arpeggio* arpeggio = toArpeggio(paletteElement->clone());
+      arpeggio->setScore(score);
+      arpeggio->setSpan(bottom->staffIdx() - top->staffIdx() + 1);
+      arpeggio->styleChanged();
+      applyDrop(score, viewer, top->upNote(), arpeggio, modifiers);
+      delete arpeggio;
+      return true;
+      }
+
+//---------------------------------------------------------
 //   applyPaletteElement
 //---------------------------------------------------------
 
@@ -595,6 +645,10 @@ bool Palette::applyPaletteElement(Element* element, Qt::KeyboardModifiers modifi
             else if (element->isMeasureNumber()) {
                   if (auto m = sel.findMeasure())
                         m->undoChangeProperty(Pid::MEASURE_NUMBER_MODE, static_cast<int>(MeasureNumberMode::SHOW));
+                  }
+            else if (applyCrossStaffArpeggio(score, viewer, sel, element, modifiers)) {
+                  // A cross-staff arpeggio is one object owned by the upper
+                  // chord, rather than one separate arpeggio per selection.
                   }
             else if (element->isSLine() && !element->isGlissando() && addSingle) {
                   Segment* startSegment = cr1->segment();

@@ -177,6 +177,29 @@ void TestMidi::ornamentTiming()
       delete arpeggioRoundTrip;
       delete arpeggioScore;
 
+      MasterScore* crossStaffScore = readScore(DIR + "testArpeggioCrossStaff.mscx");
+      QVERIFY(crossStaffScore);
+      Segment* crossStaffSegment = crossStaffScore->firstMeasure()->first(SegmentType::ChordRest);
+      while (crossStaffSegment && (!crossStaffSegment->element(0) || !crossStaffSegment->element(0)->isChord()))
+            crossStaffSegment = crossStaffSegment->next(SegmentType::ChordRest);
+      QVERIFY(crossStaffSegment);
+      QVERIFY(crossStaffSegment->element(0) && crossStaffSegment->element(0)->isChord());
+      QVERIFY(crossStaffSegment->element(VOICES) && crossStaffSegment->element(VOICES)->isChord());
+      Ms::Chord* upperChord = toChord(crossStaffSegment->element(0));
+      Ms::Chord* lowerChord = toChord(crossStaffSegment->element(VOICES));
+      QVERIFY(upperChord->arpeggio());
+      QCOMPARE(upperChord->arpeggio()->span(), 2);
+
+      events.clear();
+      crossStaffScore->renderMidi(&events, false, false, synthState);
+      QCOMPARE(noteOnTick(events, lowerChord->notes()[0]), 360);
+      QCOMPARE(noteOnTick(events, lowerChord->notes()[1]), 480);
+      QCOMPARE(noteOnTick(events, lowerChord->notes()[2]), 600);
+      QCOMPARE(noteOnTick(events, upperChord->notes()[0]), 720);
+      QCOMPARE(noteOnTick(events, upperChord->notes()[1]), 840);
+      QCOMPARE(noteOnTick(events, upperChord->notes()[2]), 960);
+      delete crossStaffScore;
+
       MasterScore* graceScore = readScore(DIR + "testGraceBefore.mscx");
       QVERIFY(graceScore);
       Segment* firstSegment = graceScore->firstMeasure()->first(SegmentType::ChordRest);
