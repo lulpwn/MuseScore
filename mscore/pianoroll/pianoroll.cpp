@@ -103,9 +103,14 @@ static QToolButton* makeToolButton(QWidget* parent, const QString& text,
       }
 
 PianorollEditor::PianorollEditor(QWidget* parent)
-   : QMainWindow(parent)
+   : QMainWindow(parent, Qt::Window
+                         | Qt::WindowTitleHint
+                         | Qt::WindowSystemMenuHint
+                         | Qt::WindowMinMaxButtonsHint
+                         | Qt::WindowCloseButtonHint)
       {
       _score = nullptr;
+      setWindowModality(Qt::NonModal);
       setObjectName(QStringLiteral("Pianoroll"));
       setWindowTitle(tr("Key Editor"));
       setMinimumSize(760, 480);
