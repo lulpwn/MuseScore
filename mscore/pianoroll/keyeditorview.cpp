@@ -1894,8 +1894,11 @@ void KeyEditorView::updateVelocityGesture(const QPoint& point)
 void KeyEditorView::finishVelocityGesture()
       {
       const QRegion oldPreview = velocityGestureRegion(_velocityPreview);
-      const bool clickDraw = _dragMode == DragMode::VelocityFreehand;
-      if (_model && !_velocityPreview.isEmpty() && (_dragThresholdPassed || clickDraw))
+      // Velocity is a discrete value edit, not a positional drag.  A small
+      // movement can already change the calculated MIDI velocity even when it
+      // is shorter than QApplication::startDragDistance().  Always submit the
+      // preview; setEventVelocities() discards a true no-op itself.
+      if (_model && !_velocityPreview.isEmpty())
             _model->setEventVelocities(_velocityPreview);
       _velocityOriginal.clear();
       _velocityPreview.clear();
