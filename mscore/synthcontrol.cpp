@@ -26,6 +26,7 @@
 #include "libmscore/undo.h"
 #include "effects/effectgui.h"
 #include "libmscore/part.h"
+#include "libmscore/playbacksustain.h"
 #include "libmscore/instrument.h"
 
 #include <QSet>
@@ -442,6 +443,12 @@ void SynthControl::saveButtonClicked()
       _score->startCmd();
       synti->prepareState();
       SynthesizerState ss = synti->state();
+      // Playback-only CC64 edits belong to the score, not to the synthesizer.
+      // Preserve that private group when the user stores new synth settings.
+      const SynthesizerGroup sustain = _score->synthesizerState().group(
+         QLatin1String(PLAYBACK_SUSTAIN_GROUP));
+      if (!sustain.name().isEmpty())
+            ss.push_back(sustain);
       if (_dirty || !_score->synthesizerState().isDefault())
             ss.setIsDefault(false);
       _score->undo(new ChangeSynthesizerState(_score, ss));

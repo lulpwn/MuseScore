@@ -37,6 +37,7 @@
 #include "note.h"
 #include "noteevent.h"
 #include "part.h"
+#include "playbacksustain.h"
 #include "rendermidi.h"
 #include "repeat.h"
 #include "repeatlist.h"
@@ -1186,71 +1187,90 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
             };
 
       std::map<int, std::vector<std::pair<int, std::pair<bool, int> > > > channelPedalEvents;
+      QHash<int, QVector<PlaybackSustainSpan> > sustainOverrides;
+      for (int staffIdx = 0; staffIdx < score->nstaves(); ++staffIdx) {
+            QVector<PlaybackSustainSpan> spans;
+            if (playbackSustainSpans(score->synthesizerState(), staffIdx, &spans))
+                  sustainOverrides.insert(staffIdx, spans);
+            }
+      struct RenderPedalSpan {
+            int staff;
+            int start;
+            int end;
+            };
+      QVector<RenderPedalSpan> pedalSpans;
+
+      auto addPedalSpan = [this, &channelPedalEvents, &addPlaybackMilliseconds,
+                           tickOffset, tick1, tick2, pedalResetGapSeconds]
+                          (int staff, int st, int et) {
+            Staff* pedalStaff = score->staff(staff);
+            if (!pedalStaff || !pedalStaff->part())
+                  return;
+            const Fraction start = Fraction::fromTicks(st);
+            const int idx = pedalStaff->channel(start, 0);
+            Instrument* instrument = pedalStaff->part()->instrument(start);
+            if (!instrument || idx < 0 || idx >= instrument->channel().size())
+                  return;
+            const int channel = instrument->channel(idx)->channel();
+            channelPedalEvents.insert({channel, std::vector<std::pair<int, std::pair<bool, int> > >()});
+            std::vector<std::pair<int, std::pair<bool, int> > >& pedalEventList
+                  = channelPedalEvents.at(channel);
+            std::pair<int, std::pair<bool, int> > lastEvent;
+            if (!pedalEventList.empty())
+                  lastEvent = pedalEventList.back();
+            else
+                  lastEvent = std::pair<int, std::pair<bool, int> >(
+                     0, std::pair<bool, int>(true, staff));
+
+            int currentPedalOnTick = st + tickOffset;
+            if (st >= tick1 && st < tick2) {
+                  const int pedalBoundaryTick = st + tickOffset;
+                  if (lastEvent.second.first == false && lastEvent.first >= pedalBoundaryTick) {
+                        if (lastEvent.first > pedalBoundaryTick) {
+                              int previousOnTick = 0;
+                              bool hasPreviousOn = false;
+                              for (auto i = pedalEventList.rbegin(); i != pedalEventList.rend(); ++i) {
+                                    if (i->second.first) {
+                                          previousOnTick = i->first;
+                                          hasPreviousOn = true;
+                                          break;
+                                          }
+                                    }
+                              const int correctedOffTick = hasPreviousOn
+                                 ? std::max(previousOnTick + 1, pedalBoundaryTick)
+                                 : pedalBoundaryTick;
+                              pedalEventList.pop_back();
+                              pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
+                                 correctedOffTick, std::pair<bool, int>(false, staff)));
+                              }
+                        currentPedalOnTick = addPlaybackMilliseconds(currentPedalOnTick,
+                                                                    pedalResetGapSeconds);
+                        }
+                  pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
+                     currentPedalOnTick, std::pair<bool, int>(true, staff)));
+                  }
+            if (et >= tick1 && et <= tick2) {
+                  int offTick = std::max(currentPedalOnTick + 1, et + tickOffset);
+                  if (!score->repeatList().empty()) {
+                        const RepeatSegment& lastRepeat = *score->repeatList().back();
+                        if (offTick > lastRepeat.utick + lastRepeat.len())
+                              offTick = lastRepeat.utick + lastRepeat.len();
+                        }
+                  pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
+                     offTick, std::pair<bool, int>(false, staff)));
+                  }
+            };
+
       for (const auto& sp : score->spannerMap().map()) {
             Spanner* s = sp.second;
-
-            int staff = s->staffIdx();
-            int idx = s->staff()->channel(s->tick(), 0);
-            int channel = s->part()->instrument(s->tick())->channel(idx)->channel();
-
             if (s->isPedal() || s->isLetRing()) {
-                  channelPedalEvents.insert({channel, std::vector<std::pair<int, std::pair<bool, int> > >()});
-                  // Keep a reference to the accumulated events.  Copying this
-                  // vector made every following pedal line appear to have no
-                  // predecessor, so connected/overlapping pedal segments were
-                  // never corrected.
-                  std::vector<std::pair<int, std::pair<bool, int> > >& pedalEventList = channelPedalEvents.at(channel);
-                  std::pair<int, std::pair<bool, int> > lastEvent;
-
-                  if (!pedalEventList.empty())
-                        lastEvent = pedalEventList.back();
-                  else
-                        lastEvent = std::pair<int, std::pair<bool, int> >(0, std::pair<bool, int>(true, staff));
-
-                  int st = s->tick().ticks();
-                  int currentPedalOnTick = st + tickOffset;
-                  if (st >= tick1 && st < tick2) {
-                        const int pedalBoundaryTick = st + tickOffset;
-                        // A reset gap is needed only when this line repedals a
-                        // connected/overlapping predecessor.  The first or an
-                        // isolated pedal line must engage on its notated start.
-                        if (lastEvent.second.first == false && lastEvent.first >= pedalBoundaryTick) {
-                              if (lastEvent.first > pedalBoundaryTick) {
-                                    int previousOnTick = 0;
-                                    bool hasPreviousOn = false;
-                                    for (auto i = pedalEventList.rbegin(); i != pedalEventList.rend(); ++i) {
-                                          if (i->second.first) {
-                                                previousOnTick = i->first;
-                                                hasPreviousOn = true;
-                                                break;
-                                                }
-                                          }
-                                    const int correctedOffTick = hasPreviousOn
-                                       ? std::max(previousOnTick + 1, pedalBoundaryTick)
-                                       : pedalBoundaryTick;
-                                    pedalEventList.pop_back();
-                                    pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
-                                       correctedOffTick, std::pair<bool, int>(false, staff)));
-                                    }
-                              currentPedalOnTick = addPlaybackMilliseconds(currentPedalOnTick, pedalResetGapSeconds);
-                              }
-                        pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(
-                           currentPedalOnTick, std::pair<bool, int>(true, staff)));
-                        }
-                  if (s->tick2().ticks() >= tick1 && s->tick2().ticks() <= tick2) {
-                        int t = s->tick2().ticks() + tickOffset;
-                        // Very short pedal lines cannot provide the full reset
-                        // gap; always leave at least one tick of pedal-down time.
-                        t = std::max(currentPedalOnTick + 1, t);
-                        if (!score->repeatList().empty()) {
-                              const RepeatSegment& lastRepeat = *score->repeatList().back();
-                              if (t > lastRepeat.utick + lastRepeat.len())
-                                    t = lastRepeat.utick + lastRepeat.len();
-                              }
-                        pedalEventList.push_back(std::pair<int, std::pair<bool, int> >(t, std::pair<bool, int>(false, staff)));
-                        }
+                  if (!sustainOverrides.contains(s->staffIdx()))
+                        pedalSpans.append({ s->staffIdx(), s->tick().ticks(), s->tick2().ticks() });
                   }
             else if (s->isVibrato()) {
+                  int staff = s->staffIdx();
+                  int idx = s->staff()->channel(s->tick(), 0);
+                  int channel = s->part()->instrument(s->tick())->channel(idx)->channel();
                   int stick = s->tick().ticks();
                   int etick = s->tick2().ticks();
                   if (stick >= tick2 || etick < tick1)
@@ -1307,6 +1327,19 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
             else
                   continue;
             }
+
+      for (auto staffIt = sustainOverrides.constBegin(); staffIt != sustainOverrides.constEnd(); ++staffIt) {
+            for (const PlaybackSustainSpan& span : staffIt.value())
+                  pedalSpans.append({ staffIt.key(), span.startTick, span.endTick });
+            }
+      std::sort(pedalSpans.begin(), pedalSpans.end(), [](const RenderPedalSpan& a,
+                                                        const RenderPedalSpan& b) {
+            if (a.start != b.start)
+                  return a.start < b.start;
+            return a.staff < b.staff;
+            });
+      for (const RenderPedalSpan& span : qAsConst(pedalSpans))
+            addPedalSpan(span.staff, span.start, span.end);
 
       for (const auto& pedalEvents : channelPedalEvents) {
             int channel = pedalEvents.first;

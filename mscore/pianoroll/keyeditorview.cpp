@@ -82,7 +82,7 @@ void KeyEditorView::setModel(KeyEditorModel* model)
       _model = model;
       if (_model) {
             connect(_model, &KeyEditorModel::modelReset, this, [this]() {
-                  _selectedPedal = nullptr;
+                  _selectedPedalStaff = -1;
                   _previewEdits.clear();
                   _previewBlockIndexes.clear();
                   _velocityPreview.clear();
@@ -345,7 +345,8 @@ QRect KeyEditorView::pedalRect(const KeyEditorModel::PedalBlock& block, bool pre
       {
       int start = block.startTick;
       int end = block.endTick;
-      if (preview && block.spanner == _selectedPedal
+      if (preview && block.staffIdx == _selectedPedalStaff
+          && block.startTick == _pedalOriginalStart && block.endTick == _pedalOriginalEnd
           && (_dragMode == DragMode::PedalMove || _dragMode == DragMode::PedalStart
               || _dragMode == DragMode::PedalEnd)) {
             start = _pedalPreviewStart;
@@ -493,7 +494,7 @@ void KeyEditorView::setLaneMode(LaneMode mode)
       if (_laneMode == mode)
             return;
       _laneMode = mode;
-      _selectedPedal = nullptr;
+      _selectedPedalStaff = -1;
       _velocityPreview.clear();
       viewport()->update(laneRect().united(QRect(0, laneRect().top(), keyboardWidth, laneRect().height())));
       }
@@ -1085,9 +1086,12 @@ void KeyEditorView::paintControllerLane(QPainter& painter, const QRect& dirty)
                   QColor color = staffColor(block.staffIdx);
                   color.setAlpha(190);
                   painter.setBrush(color);
-                  painter.setPen(QPen(block.spanner == _selectedPedal
+                  const bool selected = block.staffIdx == _selectedPedalStaff
+                                     && block.startTick == _pedalOriginalStart
+                                     && block.endTick == _pedalOriginalEnd;
+                  painter.setPen(QPen(selected
                                       ? palette.color(QPalette::Highlight) : color.darker(175),
-                                      block.spanner == _selectedPedal ? 2.2 : 1.2,
+                                      selected ? 2.2 : 1.2,
                                       block.letRing ? Qt::DashLine : Qt::SolidLine));
                   painter.drawRoundedRect(rect, 4, 4);
                   painter.setBrush(palette.color(QPalette::HighlightedText));
@@ -1386,7 +1390,7 @@ void KeyEditorView::updateCursorForPosition(const QPoint& point)
                   }
             else if (_laneMode == LaneMode::Sustain) {
                   DragMode part = DragMode::None;
-                  if (pedalAt(point, &part))
+                  if (pedalAt(point, &part) >= 0)
                         viewport()->setCursor(part == DragMode::PedalMove
                                               ? Qt::SizeAllCursor : Qt::SizeHorCursor);
                   else
@@ -1927,12 +1931,13 @@ void KeyEditorView::finishVelocityGesture()
             viewport()->update(oldPreview);
       }
 
-Spanner* KeyEditorView::pedalAt(const QPoint& point, DragMode* part) const
+int KeyEditorView::pedalAt(const QPoint& point, DragMode* part) const
       {
       if (!_model)
-            return nullptr;
-      for (auto it = _model->pedals().crbegin(); it != _model->pedals().crend(); ++it) {
-            QRect rect = pedalRect(*it);
+            return -1;
+      for (int i = _model->pedals().size() - 1; i >= 0; --i) {
+            const KeyEditorModel::PedalBlock& block = _model->pedals()[i];
+            QRect rect = pedalRect(block);
             if (!rect.adjusted(-5, -4, 5, 4).contains(point))
                   continue;
             if (part) {
@@ -1943,9 +1948,9 @@ Spanner* KeyEditorView::pedalAt(const QPoint& point, DragMode* part) const
                   else
                         *part = DragMode::PedalMove;
                   }
-            return it->spanner;
+            return i;
             }
-      return nullptr;
+      return -1;
       }
 
 void KeyEditorView::beginPedalGesture(const QPoint& point)
@@ -1953,22 +1958,18 @@ void KeyEditorView::beginPedalGesture(const QPoint& point)
       if (!_model)
             return;
       DragMode part = DragMode::None;
-      Spanner* hit = pedalAt(point, &part);
-      if (hit) {
-            _selectedPedal = hit;
+      const int hit = pedalAt(point, &part);
+      if (hit >= 0) {
+            const KeyEditorModel::PedalBlock& block = _model->pedals()[hit];
+            _selectedPedalStaff = block.staffIdx;
             _dragMode = part;
-            for (const KeyEditorModel::PedalBlock& block : _model->pedals()) {
-                  if (block.spanner == hit) {
-                        _pedalOriginalStart = block.startTick;
-                        _pedalOriginalEnd = block.endTick;
-                        _pedalPreviewStart = block.startTick;
-                        _pedalPreviewEnd = block.endTick;
-                        break;
-                        }
-                  }
+            _pedalOriginalStart = block.startTick;
+            _pedalOriginalEnd = block.endTick;
+            _pedalPreviewStart = block.startTick;
+            _pedalPreviewEnd = block.endTick;
             }
       else if (_laneTool == LaneTool::Freehand) {
-            _selectedPedal = nullptr;
+            _selectedPedalStaff = -1;
             _dragMode = DragMode::PedalCreate;
             const int tick = (_pressModifiers & Qt::ShiftModifier) ? xToTick(point.x())
                                                                     : snapTick(xToTick(point.x()));
@@ -1977,7 +1978,7 @@ void KeyEditorView::beginPedalGesture(const QPoint& point)
             _pedalPreviewEnd = tick + qMax(1, _gridTicks);
             }
       else {
-            _selectedPedal = nullptr;
+            _selectedPedalStaff = -1;
             _dragMode = DragMode::None;
             }
       viewport()->update(laneRect());
@@ -2039,8 +2040,9 @@ void KeyEditorView::finishPedalGesture()
                   _pedalPreviewEnd = _pedalPreviewStart + 1;
             _model->createPedal(_pedalPreviewStart, _pedalPreviewEnd, _editStaffIdx);
             }
-      else if (_selectedPedal)
-            _model->editPedal(_selectedPedal, _pedalPreviewStart, _pedalPreviewEnd);
+      else if (_selectedPedalStaff >= 0)
+            _model->editPedal(_selectedPedalStaff, _pedalOriginalStart, _pedalOriginalEnd,
+                              _pedalPreviewStart, _pedalPreviewEnd);
       viewport()->update(laneRect());
       }
 
@@ -2091,7 +2093,7 @@ void KeyEditorView::mousePressEvent(QMouseEvent* event)
       if (controllerContentRect().contains(event->pos())) {
             if (_laneMode == LaneMode::Velocity) {
                   _focusDomain = FocusDomain::Velocity;
-                  _selectedPedal = nullptr;
+                  _selectedPedalStaff = -1;
                   beginVelocityGesture(event->pos());
                   }
             else if (_laneMode == LaneMode::Sustain) {
@@ -2100,7 +2102,7 @@ void KeyEditorView::mousePressEvent(QMouseEvent* event)
                   }
             else {
                   _focusDomain = FocusDomain::Tempo;
-                  _selectedPedal = nullptr;
+                  _selectedPedalStaff = -1;
                   }
             event->accept();
             return;
@@ -2109,8 +2111,8 @@ void KeyEditorView::mousePressEvent(QMouseEvent* event)
             return;
 
       _focusDomain = FocusDomain::Notes;
-      if (_selectedPedal) {
-            _selectedPedal = nullptr;
+      if (_selectedPedalStaff >= 0) {
+            _selectedPedalStaff = -1;
             viewport()->update(laneRect());
             }
       _cursorTick = _pressTick;
@@ -2403,9 +2405,10 @@ void KeyEditorView::keyPressEvent(QKeyEvent* event)
             return;
             }
       if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
-            if (_focusDomain == FocusDomain::Sustain && _selectedPedal) {
-                  _model->deletePedal(_selectedPedal);
-                  _selectedPedal = nullptr;
+            if (_focusDomain == FocusDomain::Sustain && _selectedPedalStaff >= 0) {
+                  _model->deletePedal(_selectedPedalStaff,
+                                      _pedalOriginalStart, _pedalOriginalEnd);
+                  _selectedPedalStaff = -1;
                   }
             else
                   _model->deleteSelection();

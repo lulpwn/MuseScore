@@ -107,7 +107,7 @@ class KeyEditorView : public QAbstractScrollArea
       int _velocityAnchor { -1 };
       QRect _velocityTransformRect;
 
-      Spanner* _selectedPedal { nullptr };
+      int _selectedPedalStaff { -1 };
       int _pedalOriginalStart { 0 };
       int _pedalOriginalEnd { 1 };
       int _pedalPreviewStart { 0 };
@@ -180,7 +180,7 @@ class KeyEditorView : public QAbstractScrollArea
       void finishVelocityGesture();
       void updateVelocityFreehand(const QPoint& from, const QPoint& to);
       void updateVelocityLine(const QPoint& from, const QPoint& to);
-      Spanner* pedalAt(const QPoint&, DragMode* part = nullptr) const;
+      int pedalAt(const QPoint&, DragMode* part = nullptr) const;
       void beginPedalGesture(const QPoint&);
       void updatePedalGesture(const QPoint&);
       void finishPedalGesture();
@@ -254,7 +254,7 @@ class KeyEditorView : public QAbstractScrollArea
       void followPlaybackTick(int tick);
       void ensurePitchVisible(int pitch, bool center = false);
       int cursorTick() const { return _cursorTick; }
-      Spanner* selectedPedal() const { return _selectedPedal; }
+      bool hasSelectedPedal() const { return _selectedPedalStaff >= 0; }
       bool interactionActive() const { return _dragMode != DragMode::None; }
       void refreshModel();
       };

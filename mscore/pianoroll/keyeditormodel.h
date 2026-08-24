@@ -203,8 +203,9 @@ class KeyEditorModel : public QObject
       bool pasteAt(int tick, int targetStaffIdx = -1);
 
       bool createPedal(int startTick, int endTick, int staffIdx);
-      bool editPedal(Spanner*, int startTick, int endTick);
-      bool deletePedal(Spanner*);
+      bool editPedal(int staffIdx, int oldStartTick, int oldEndTick,
+                     int startTick, int endTick);
+      bool deletePedal(int staffIdx, int startTick, int endTick);
 
       };
 

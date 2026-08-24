@@ -13,6 +13,7 @@
 #include "libmscore/noteevent.h"
 #include "libmscore/part.h"
 #include "libmscore/pedal.h"
+#include "libmscore/playbacksustain.h"
 #include "libmscore/rest.h"
 #include "libmscore/score.h"
 #include "libmscore/segment.h"
@@ -310,11 +311,30 @@ void KeyEditorModel::rebuildPedals()
       _pedals.clear();
       if (!_score)
             return;
+
+      QSet<int> overriddenStaves;
+      for (Staff* staff : _visibleStaves) {
+            if (!staff)
+                  continue;
+            QVector<PlaybackSustainSpan> spans;
+            if (!playbackSustainSpans(_score->synthesizerState(), staff->idx(), &spans))
+                  continue;
+            overriddenStaves.insert(staff->idx());
+            for (const PlaybackSustainSpan& span : spans) {
+                  PedalBlock block;
+                  block.startTick = span.startTick;
+                  block.endTick = span.endTick;
+                  block.staffIdx = staff->idx();
+                  _pedals.append(block);
+                  }
+            }
       for (const auto& entry : _score->spannerMap().map()) {
             Spanner* spanner = entry.second;
             if (!spanner || (!spanner->isPedal() && !spanner->isLetRing()))
                   continue;
             if (!staffIsVisible(spanner->staffIdx()))
+                  continue;
+            if (overriddenStaves.contains(spanner->staffIdx()))
                   continue;
             PedalBlock block;
             block.spanner = spanner;
@@ -1897,53 +1917,105 @@ bool KeyEditorModel::createPedal(int startTick, int endTick, int staffIdx)
       endTick = qMin(_scoreEndTick, qMax(startTick + 1, endTick));
       if (startTick >= _scoreEndTick || endTick <= startTick)
             return false;
-      for (const PedalBlock& existing : _pedals) {
-            if (existing.staffIdx == staff->idx() && startTick < existing.endTick
-                && existing.startTick < endTick)
+      QVector<PlaybackSustainSpan> spans;
+      if (!playbackSustainSpans(_score->synthesizerState(), staff->idx(), &spans)) {
+            for (const PedalBlock& existing : _pedals) {
+                  if (existing.staffIdx == staff->idx())
+                        spans.append({ existing.startTick, existing.endTick });
+                  }
+            }
+      for (const PlaybackSustainSpan& existing : qAsConst(spans)) {
+            if (startTick < existing.endTick && existing.startTick < endTick)
                   return false;
             }
-      Pedal* pedal = new Pedal(_score);
-      const int track = staff->idx() * VOICES;
-      pedal->setTrack(track);
-      pedal->setTrack2(track);
-      pedal->setTick(Fraction::fromTicks(startTick));
-      pedal->setTicks(Fraction::fromTicks(endTick - startTick));
+      spans.append({ startTick, endTick });
+      std::sort(spans.begin(), spans.end(), [](const PlaybackSustainSpan& a,
+                                              const PlaybackSustainSpan& b) {
+            return a.startTick < b.startTick;
+            });
+      SynthesizerState state = _score->synthesizerState();
+      setPlaybackSustainSpans(state, staff->idx(), spans);
       _score->startCmd();
-      _score->undoAddElement(pedal);
+      _score->undo(new ChangeSynthesizerState(_score, state));
       _score->endCmd();
       rebuild();
       return true;
       }
 
-bool KeyEditorModel::editPedal(Spanner* spanner, int startTick, int endTick)
+bool KeyEditorModel::editPedal(int staffIdx, int oldStartTick, int oldEndTick,
+                               int startTick, int endTick)
       {
-      if (!_score || !spanner || (!spanner->isPedal() && !spanner->isLetRing()))
+      if (!_score)
+            return false;
+      Staff* staff = _score->staff(staffIdx);
+      if (!staff || !_editStaff || staff->part() != _editStaff->part())
             return false;
       startTick = qMax(0, startTick);
       endTick = qMin(_scoreEndTick, qMax(startTick + 1, endTick));
       if (startTick >= _scoreEndTick || endTick <= startTick)
             return false;
-      for (const PedalBlock& existing : _pedals) {
-            if (existing.spanner != spanner && existing.staffIdx == spanner->staffIdx()
-                && startTick < existing.endTick && existing.startTick < endTick)
+
+      QVector<PlaybackSustainSpan> spans;
+      if (!playbackSustainSpans(_score->synthesizerState(), staffIdx, &spans)) {
+            for (const PedalBlock& existing : _pedals) {
+                  if (existing.staffIdx == staffIdx)
+                        spans.append({ existing.startTick, existing.endTick });
+                  }
+            }
+      int editedIndex = -1;
+      for (int i = 0; i < spans.size(); ++i) {
+            if (spans[i].startTick == oldStartTick && spans[i].endTick == oldEndTick) {
+                  editedIndex = i;
+                  break;
+                  }
+            }
+      if (editedIndex < 0)
+            return false;
+      for (int i = 0; i < spans.size(); ++i) {
+            if (i != editedIndex && startTick < spans[i].endTick && spans[i].startTick < endTick)
                   return false;
             }
-      if (spanner->tick().ticks() == startTick && spanner->tick2().ticks() == endTick)
+      if (oldStartTick == startTick && oldEndTick == endTick)
             return false;
+      spans[editedIndex] = { startTick, endTick };
+      std::sort(spans.begin(), spans.end(), [](const PlaybackSustainSpan& a,
+                                              const PlaybackSustainSpan& b) {
+            return a.startTick < b.startTick;
+            });
+      SynthesizerState state = _score->synthesizerState();
+      setPlaybackSustainSpans(state, staffIdx, spans);
       _score->startCmd();
-      spanner->undoChangeProperty(Pid::SPANNER_TICK, Fraction::fromTicks(startTick));
-      spanner->undoChangeProperty(Pid::SPANNER_TICKS, Fraction::fromTicks(endTick - startTick));
+      _score->undo(new ChangeSynthesizerState(_score, state));
       _score->endCmd();
       rebuild();
       return true;
       }
 
-bool KeyEditorModel::deletePedal(Spanner* spanner)
+bool KeyEditorModel::deletePedal(int staffIdx, int startTick, int endTick)
       {
-      if (!_score || !spanner || (!spanner->isPedal() && !spanner->isLetRing()))
+      if (!_score)
             return false;
+      QVector<PlaybackSustainSpan> spans;
+      if (!playbackSustainSpans(_score->synthesizerState(), staffIdx, &spans)) {
+            for (const PedalBlock& existing : _pedals) {
+                  if (existing.staffIdx == staffIdx)
+                        spans.append({ existing.startTick, existing.endTick });
+                  }
+            }
+      bool removed = false;
+      for (int i = 0; i < spans.size(); ++i) {
+            if (spans[i].startTick == startTick && spans[i].endTick == endTick) {
+                  spans.remove(i);
+                  removed = true;
+                  break;
+                  }
+            }
+      if (!removed)
+            return false;
+      SynthesizerState state = _score->synthesizerState();
+      setPlaybackSustainSpans(state, staffIdx, spans);
       _score->startCmd();
-      _score->undoRemoveElement(spanner);
+      _score->undo(new ChangeSynthesizerState(_score, state));
       _score->endCmd();
       rebuild();
       return true;
