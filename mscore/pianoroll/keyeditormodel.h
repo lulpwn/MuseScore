@@ -192,6 +192,7 @@ class KeyEditorModel : public QObject
       bool setSelectionVelocity(int velocity);
       bool setVelocities(const QHash<Note*, int>& velocities);
       bool setEventVelocities(const QHash<int, int>& velocities);
+      bool resetSelectionVelocities();
       bool setSelectionEventTiming(int value, bool changeOntime);
       bool setNoteEventTiming(Note*, int eventIndex, int value, bool changeOntime);
       bool quantizeSelection(int gridTicks);

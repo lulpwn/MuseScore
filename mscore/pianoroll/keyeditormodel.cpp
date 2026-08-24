@@ -57,6 +57,22 @@ static void undoEventListForLinkedNotes(Note* source, const NoteEventList& event
             }
       }
 
+static void undoVelocityForLinkedNotes(Note* source, Note::ValueType type, int offset)
+      {
+      if (!source)
+            return;
+      QSet<Note*> seen;
+      for (ScoreElement* linkedElement : source->linkList()) {
+            if (!linkedElement || linkedElement->type() != ElementType::NOTE)
+                  continue;
+            Note* linkedNote = toNote(linkedElement);
+            if (!linkedNote->score() || seen.contains(linkedNote))
+                  continue;
+            seen.insert(linkedNote);
+            linkedNote->score()->undo(new ChangeVelocity(linkedNote, type, offset));
+            }
+      }
+
 static qreal velocityRampProgress(ChangeMethod method, qreal progress)
       {
       progress = qBound<qreal>(0.0, progress, 1.0);
@@ -1552,6 +1568,60 @@ bool KeyEditorModel::setEventVelocities(const QHash<int, int>& velocities)
       _score->startCmd();
       for (auto it = replacements.begin(); it != replacements.end(); ++it) {
             undoEventListForLinkedNotes(it.key(), it.value());
+            }
+      _score->endCmd();
+      rebuild();
+      emit selectionChanged();
+      return true;
+      }
+
+bool KeyEditorModel::resetSelectionVelocities()
+      {
+      if (!_score)
+            return false;
+      const QVector<int> selected = selectedEventIndexes();
+      if (selected.isEmpty())
+            return false;
+
+      QHash<Note*, NoteEventList> replacements;
+      QSet<Note*> sourceNotes;
+      bool rawVelocityChanged = false;
+      bool notationVelocityChanged = false;
+      for (int blockIndex : selected) {
+            if (blockIndex < 0 || blockIndex >= _notes.size())
+                  continue;
+            const NoteBlock& block = _notes[blockIndex];
+            Note* note = block.note;
+            if (!note || block.eventIndex < 0 || block.eventIndex >= note->playEvents().size())
+                  continue;
+
+            sourceNotes.insert(note);
+            notationVelocityChanged = notationVelocityChanged
+                  || note->veloType() != Note::ValueType::OFFSET_VAL
+                  || note->veloOffset() != 0;
+            NoteEventList list = replacements.contains(note)
+                               ? replacements.value(note) : note->playEvents();
+            if (list[block.eventIndex].velocity() >= 0) {
+                  list[block.eventIndex].setVelocity(-1);
+                  rawVelocityChanged = true;
+                  }
+            replacements.insert(note, list);
+            }
+
+      if (!rawVelocityChanged && !notationVelocityChanged)
+            return false;
+
+      _score->startCmd();
+      if (rawVelocityChanged) {
+            for (auto it = replacements.begin(); it != replacements.end(); ++it)
+                  undoEventListForLinkedNotes(it.key(), it.value());
+            }
+      if (notationVelocityChanged) {
+            for (Note* note : sourceNotes) {
+                  if (note->veloType() == Note::ValueType::OFFSET_VAL && note->veloOffset() == 0)
+                        continue;
+                  undoVelocityForLinkedNotes(note, Note::ValueType::OFFSET_VAL, 0);
+                  }
             }
       _score->endCmd();
       rebuild();

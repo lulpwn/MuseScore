@@ -449,6 +449,18 @@ QRegion KeyEditorView::velocityGestureRegion(const QHash<int, int>& values) cons
             const int y = velocityToY(it.value());
             region += QRect(x - 6, qMin(y, baseline) - 6, 13,
                             qAbs(baseline - y) + 13);
+            // Selected velocity handles have a numeric label beside them.
+            // Include it in the gesture damage region so the preview number
+            // is repainted continuously instead of only after the commit.
+            if (_model->eventSelected(index)) {
+                  int labelX = x + 8;
+                  if (labelX + 32 > controllerContentRect().right())
+                        labelX = x - 40;
+                  const int labelY = qBound(controllerContentRect().top() + 2,
+                                            y - 9,
+                                            controllerContentRect().bottom() - 19);
+                  region += QRect(labelX, labelY, 32, 18).adjusted(-2, -2, 2, 2);
+                  }
             }
       return region.intersected(laneRect());
       }
@@ -1773,14 +1785,18 @@ void KeyEditorView::updateVelocityFreehand(const QPoint& from, const QPoint& to)
       if (!_model)
             return;
       // Use a screen-space brush instead of requiring an exact onset tick.
-      // This makes clicks and mostly vertical strokes edit nearby handles too,
-      // and intentionally applies to selected and unselected notes alike.
+      // This makes clicks and mostly vertical strokes edit nearby handles too.
+      // An existing selection constrains the brush; without one, all notes
+      // under the stroke remain editable.
+      const bool constrainToSelection = !_model->selectedEventIndexes().isEmpty();
       constexpr int brushRadius = 6;
       const int left = qMin(from.x(), to.x()) - brushRadius;
       const int right = qMax(from.x(), to.x()) + brushRadius;
       const int start = xToTick(left);
       const int end = xToTick(right);
       for (int index : _model->notesInRange(start, end, 0, 127)) {
+            if (constrainToSelection && !_model->eventSelected(index))
+                  continue;
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
             if (!block.note)
                   continue;
@@ -1800,11 +1816,14 @@ void KeyEditorView::updateVelocityLine(const QPoint& from, const QPoint& to)
       if (!_model)
             return;
       _velocityPreview.clear();
+      const bool constrainToSelection = !_model->selectedEventIndexes().isEmpty();
       const int tick0 = xToTick(from.x());
       const int tick1 = xToTick(to.x());
       const int start = qMin(tick0, tick1);
       const int end = qMax(tick0, tick1);
       for (int index : _model->notesInRange(start, end, 0, 127)) {
+            if (constrainToSelection && !_model->eventSelected(index))
+                  continue;
             const KeyEditorModel::NoteBlock& block = _model->notes()[index];
             if (block.startTick < start || block.startTick > end)
                   continue;
@@ -2317,6 +2336,14 @@ void KeyEditorView::contextMenuEvent(QContextMenuEvent* event)
                          : _laneMode == LaneMode::Sustain ? FocusDomain::Sustain
                                                          : FocusDomain::Tempo;
             addLaneTools();
+            if (_laneMode == LaneMode::Velocity) {
+                  menu.addSeparator();
+                  QAction* resetVelocity = menu.addAction(tr("Reset velocity"));
+                  resetVelocity->setEnabled(!_model->selectedEventIndexes().isEmpty());
+                  connect(resetVelocity, &QAction::triggered, this, [this]() {
+                        _model->resetSelectionVelocities();
+                        });
+                  }
             menu.exec(event->globalPos());
             return;
             }
