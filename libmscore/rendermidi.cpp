@@ -938,6 +938,9 @@ void MidiRenderer::collectMeasureEvents(EventMap* events, Measure const * m, con
 
 void Score::updateHairpin(Hairpin* h)
       {
+      if (!h->playHairpin())
+            return;
+
       Staff* st = h->staff();
       Fraction tick  = h->tick();
       Fraction tick2 = h->tick2();
@@ -959,6 +962,8 @@ void Score::updateHairpin(Hairpin* h)
                         continue;
 
                   Hairpin* other = toHairpin(s);
+                  if (!other->playHairpin())
+                        continue;
                   if (other->dynRange() == Dynamic::Range::STAFF)
                         continue;
 

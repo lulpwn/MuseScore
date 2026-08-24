@@ -493,6 +493,7 @@ Element* HairpinSegment::propertyDelegate(Pid pid)
             case Pid::HAIRPIN_HEIGHT:
             case Pid::HAIRPIN_TYPE:
             case Pid::LINE_STYLE:
+            case Pid::PLAY:
             case Pid::SINGLE_NOTE_DYNAMICS:
             case Pid::VELO_CHANGE:
             case Pid::VELO_CHANGE_METHOD:
@@ -674,6 +675,7 @@ void Hairpin::write(XmlWriter& xml) const
       xml.tag("subtype", int(_hairpinType));
       writeProperty(xml, Pid::VELO_CHANGE);
       writeProperty(xml, Pid::HAIRPIN_CIRCLEDTIP);
+      writeProperty(xml, Pid::PLAY);
       writeProperty(xml, Pid::DYNAMIC_RANGE);
       writeProperty(xml, Pid::SINGLE_NOTE_DYNAMICS);
       writeProperty(xml, Pid::VELO_CHANGE_METHOD);
@@ -714,6 +716,8 @@ void Hairpin::read(XmlReader& e)
                   ;
             else if (tag == "hairpinCircledTip")
                   _hairpinCircledTip = e.readInt();
+            else if (readProperty(tag, e, Pid::PLAY))
+                  ;
             else if (tag == "veloChange")
                   _veloChange = e.readInt();
             else if (tag == "dynType")
@@ -746,6 +750,8 @@ QVariant Hairpin::getProperty(Pid id) const
                 return _hairpinCircledTip;
             case Pid::HAIRPIN_TYPE:
                 return int(_hairpinType);
+            case Pid::PLAY:
+                  return _playHairpin;
             case Pid::VELO_CHANGE:
                   return _veloChange;
             case Pid::DYNAMIC_RANGE:
@@ -775,6 +781,11 @@ bool Hairpin::setProperty(Pid id, const QVariant& v)
                 break;
             case Pid::HAIRPIN_TYPE:
                   setHairpinType(HairpinType(v.toInt()));
+                  break;
+            case Pid::PLAY:
+                  _playHairpin = v.toBool();
+                  if (score())
+                        score()->setPlaylistDirty();
                   break;
             case Pid::VELO_CHANGE:
                   _veloChange = v.toInt();
@@ -810,6 +821,9 @@ QVariant Hairpin::propertyDefault(Pid id) const
       switch (id) {
             case Pid::HAIRPIN_CIRCLEDTIP:
                   return false;
+
+            case Pid::PLAY:
+                  return true;
 
             case Pid::VELO_CHANGE:
                   return 0;

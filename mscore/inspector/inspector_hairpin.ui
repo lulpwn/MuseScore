@@ -79,6 +79,29 @@
       <property name="spacing">
        <number>3</number>
       </property>
+      <item row="4" column="0" colspan="2">
+       <widget class="QCheckBox" name="playHairpin">
+        <property name="text">
+         <string>Play</string>
+        </property>
+        <property name="checked">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="2">
+       <widget class="Ms::ResetButton" name="resetPlayHairpin" native="true">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="accessibleName">
+         <string>Reset 'Play' value</string>
+        </property>
+       </widget>
+      </item>
       <item row="10" column="2">
        <widget class="Ms::ResetButton" name="resetSingleNoteDynamics" native="true">
         <property name="sizePolicy">
@@ -500,6 +523,7 @@
   <tabstop>hairpinCircledTip</tabstop>
   <tabstop>hairpinHeight</tabstop>
   <tabstop>hairpinContHeight</tabstop>
+  <tabstop>playHairpin</tabstop>
   <tabstop>placement</tabstop>
   <tabstop>dynRange</tabstop>
   <tabstop>veloChange</tabstop>

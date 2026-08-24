@@ -45,6 +45,7 @@ InspectorHairpin::InspectorHairpin(QWidget* parent)
             { Pid::HAIRPIN_CIRCLEDTIP,   0, h.hairpinCircledTip,   h.resetHairpinCircledTip },
             { Pid::HAIRPIN_TYPE,         0, h.hairpinType,         0                        },
             { Pid::PLACEMENT,            0, h.placement,           h.resetPlacement         },
+            { Pid::PLAY,                 0, h.playHairpin,          h.resetPlayHairpin        },
             { Pid::DYNAMIC_RANGE,        0, h.dynRange,            h.resetDynRange          },
             { Pid::VELO_CHANGE,          0, h.veloChange,          h.resetVeloChange        },
             { Pid::HAIRPIN_HEIGHT,       0, h.hairpinHeight,       h.resetHairpinHeight     },

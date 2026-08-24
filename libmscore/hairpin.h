@@ -76,6 +76,7 @@ class HairpinSegment final : public TextLineBaseSegment {
 //   @@ Hairpin
 //   @P dynRange     enum (Dynamic.STAFF, Dynamic.PART, Dynamic.SYSTEM)
 //   @P hairpinType  enum (Hairpin.CRESCENDO, Hairpin.DECRESCENDO)
+//   @P play          bool
 //   @P veloChange   int
 //---------------------------------------------------------
 
@@ -83,6 +84,7 @@ class Hairpin final : public TextLineBase {
       HairpinType _hairpinType { HairpinType::INVALID };
       int _veloChange;
       bool  _hairpinCircledTip;
+      bool _playHairpin { true };
       Dynamic::Range _dynRange;
       bool _singleNoteDynamics;
       ChangeMethod _veloChangeMethod;
@@ -107,6 +109,9 @@ class Hairpin final : public TextLineBase {
 
       bool hairpinCircledTip() const            { return _hairpinCircledTip; }
       void setHairpinCircledTip(bool val)       { _hairpinCircledTip = val; }
+
+      bool playHairpin() const                  { return _playHairpin; }
+      void setPlayHairpin(bool val)             { _playHairpin = val; }
 
       int veloChange() const                    { return _veloChange; }
       void setVeloChange(int v)                 { _veloChange = v;    }
