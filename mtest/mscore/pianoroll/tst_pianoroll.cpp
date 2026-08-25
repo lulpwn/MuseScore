@@ -14,6 +14,8 @@
 #include "libmscore/noteevent.h"
 #include "libmscore/chord.h"
 #include "libmscore/part.h"
+#include "libmscore/pedal.h"
+#include "libmscore/playbacksustain.h"
 #include "libmscore/score.h"
 #include "libmscore/staff.h"
 
@@ -39,6 +41,7 @@ class TestPianoRoll : public QObject, public MTest
       void allTracksProjectionAndRender();
       void noteTransactionsUndoAndRedo();
       void sustainSpanUndoAndRedo();
+      void notationPedalRemainsAuthoritativeAfterPlaybackEdit();
       void projectionInvalidationKeepsViewport();
       void spaceRequestsPlaybackToggle();
       void controllerSelectorLivesInLane();
@@ -150,6 +153,54 @@ void TestPianoRoll::sustainSpanUndoAndRedo()
       testScore->undoRedo(false, nullptr);
       model.rebuild();
       QCOMPARE(model.pedals().size(), originalCount + 1);
+
+      delete testScore;
+      }
+
+void TestPianoRoll::notationPedalRemainsAuthoritativeAfterPlaybackEdit()
+      {
+      MasterScore* testScore = readGrandStaffScore();
+      QVERIFY(testScore);
+      Staff* staff = testScore->staff(0);
+      Pedal* pedal = new Pedal(testScore);
+      pedal->setTrack(staff->idx() * VOICES);
+      pedal->setTrack2(staff->idx() * VOICES);
+      pedal->setTick(Fraction::fromTicks(240));
+      pedal->setTicks(Fraction::fromTicks(480));
+      testScore->startCmd();
+      testScore->undoAddElement(pedal);
+      testScore->endCmd();
+
+      KeyEditorModel model;
+      model.setContext(staff, *staff->part()->staves());
+      const int notationCount = model.pedals().size();
+      const KeyEditorModel::PedalBlock* notationBlock = nullptr;
+      for (const KeyEditorModel::PedalBlock& block : model.pedals()) {
+            if (block.spanner == pedal) {
+                  notationBlock = &block;
+                  break;
+                  }
+            }
+      QVERIFY(notationBlock);
+      const int notationStart = notationBlock->startTick;
+      const int notationEnd = notationBlock->endTick;
+      QVERIFY(model.editPedal(staff->idx(), notationStart, notationEnd, 300, 700));
+      QCOMPARE(pedal->tick().ticks(), notationStart);
+      QCOMPARE(pedal->tick2().ticks(), notationEnd);
+
+      QVector<PlaybackSustainSpan> stored;
+      QVERIFY(playbackSustainSpans(testScore->synthesizerState(), staff->idx(), &stored));
+      QCOMPARE(stored.size(), 1);
+      QCOMPARE(stored.front().sourceStartTick, notationStart);
+      QCOMPARE(stored.front().sourceEndTick, notationEnd);
+
+      // Removing the notation pedal must also remove its effective CC64 span;
+      // the playback-only override must not become an orphan.
+      testScore->startCmd();
+      testScore->undoRemoveElement(pedal);
+      testScore->endCmd();
+      model.rebuild();
+      QCOMPARE(model.pedals().size(), notationCount - 1);
 
       delete testScore;
       }
@@ -324,6 +375,20 @@ void TestPianoRoll::tiedPlaybackResizeDoesNotCompound()
       index = model.noteIndex(first.note, first.eventIndex);
       QVERIFY(index >= 0);
       QCOMPARE(model.notes()[index].endTick, secondTargetEnd);
+
+      const KeyEditorModel::NoteBlock shortened = model.notes()[index];
+      const int shortTargetEnd = shortened.startTick
+                               + qMax(1, shortened.note->chord()->actualTicks().ticks() / 2);
+      QVERIFY2(shortTargetEnd < shortened.endTick,
+               "fixture must allow shortening below the tied continuation");
+      edit.startTick = shortened.startTick;
+      edit.endTick = shortTargetEnd;
+      QVERIFY(model.applyPlaybackTimingEdits({ edit }));
+      index = model.noteIndex(first.note, first.eventIndex);
+      QVERIFY(index >= 0);
+      QCOMPARE(model.notes()[index].endTick, shortTargetEnd);
+      QVERIFY(first.note->tieFor());
+      QVERIFY(first.note->playEvents()[first.eventIndex].suppressTieTail());
 
       delete testScore;
       }

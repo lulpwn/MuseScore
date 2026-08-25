@@ -109,7 +109,7 @@ class PianorollEditor final : public QMainWindow, public MuseScoreView
       void handleAction(QAction*);
 
    public:
-      explicit PianorollEditor(QWidget* parent = nullptr);
+      PianorollEditor();
       ~PianorollEditor() override;
 
       void setScore(Score*) override;

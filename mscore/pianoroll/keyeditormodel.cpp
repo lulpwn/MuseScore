@@ -39,7 +39,28 @@ namespace Ms {
 
 static const char* KEY_EDITOR_MIME = "application/x-musescore-key-editor-notes";
 static const quint32 KEY_EDITOR_CLIPBOARD_MAGIC = 0x4b455933; // KEY3
-static const quint16 KEY_EDITOR_CLIPBOARD_VERSION = 3;
+static const quint16 KEY_EDITOR_CLIPBOARD_VERSION = 4;
+
+static QVector<PlaybackSustainSpan> notationSustainSpans(Score* score, int staffIdx)
+      {
+      QVector<PlaybackSustainSpan> spans;
+      if (!score)
+            return spans;
+      for (const auto& entry : score->spannerMap().map()) {
+            Spanner* spanner = entry.second;
+            if (!spanner || (!spanner->isPedal() && !spanner->isLetRing())
+                || spanner->staffIdx() != staffIdx)
+                  continue;
+            spans.append({ spanner->tick().ticks(), spanner->tick2().ticks(), -1, -1 });
+            }
+      std::sort(spans.begin(), spans.end(), [](const PlaybackSustainSpan& a,
+                                              const PlaybackSustainSpan& b) {
+            if (a.startTick != b.startTick)
+                  return a.startTick < b.startTick;
+            return a.endTick < b.endTick;
+            });
+      return spans;
+      }
 
 static void undoEventListForLinkedNotes(Note* source, const NoteEventList& events)
       {
@@ -216,37 +237,6 @@ QSet<Note*> KeyEditorModel::tieChain(Note* original) const
       return result;
       }
 
-int KeyEditorModel::playbackTieTail(Note* note, int eventIndex) const
-      {
-      if (!note || !note->tieFor() || eventIndex < 0
-          || eventIndex != note->playEvents().size() - 1)
-            return 0;
-
-      int tail = 0;
-      Note* continuation = note->tieFor()->endNote();
-      QSet<Note*> seen;
-      while (continuation && !seen.contains(continuation)) {
-            seen.insert(continuation);
-            bool startsGlissando = false;
-            for (Spanner* spanner : continuation->spannerFor()) {
-                  if (spanner && spanner->type() == ElementType::GLISSANDO) {
-                        startsGlissando = true;
-                        break;
-                        }
-                  }
-            const NoteEventList& events = continuation->playEvents();
-            if (events.size() != 1 || startsGlissando)
-                  break;
-            if (continuation->chord()) {
-                  tail += continuation->chord()->actualTicks().ticks()
-                        * events.front().len() / NoteEvent::NOTE_LENGTH;
-                  }
-            continuation = continuation->tieFor()
-                         ? continuation->tieFor()->endNote() : nullptr;
-            }
-      return qMax(0, tail);
-      }
-
 bool KeyEditorModel::playbackBounds(Note* original, int& startTick, int& endTick) const
       {
       Note* note = rootNote(original);
@@ -312,37 +302,65 @@ void KeyEditorModel::rebuildPedals()
       if (!_score)
             return;
 
-      QSet<int> overriddenStaves;
       for (Staff* staff : _visibleStaves) {
             if (!staff)
                   continue;
-            QVector<PlaybackSustainSpan> spans;
-            if (!playbackSustainSpans(_score->synthesizerState(), staff->idx(), &spans))
-                  continue;
-            overriddenStaves.insert(staff->idx());
-            for (const PlaybackSustainSpan& span : spans) {
+            QVector<PedalBlock> notationBlocks;
+            for (const auto& entry : _score->spannerMap().map()) {
+                  Spanner* spanner = entry.second;
+                  if (!spanner || (!spanner->isPedal() && !spanner->isLetRing())
+                      || spanner->staffIdx() != staff->idx())
+                        continue;
+                  PedalBlock block;
+                  block.spanner = spanner;
+                  block.startTick = spanner->tick().ticks();
+                  block.endTick = qMax(block.startTick + 1, spanner->tick2().ticks());
+                  block.staffIdx = staff->idx();
+                  block.letRing = spanner->isLetRing();
+                  notationBlocks.append(block);
+                  }
+
+            std::sort(notationBlocks.begin(), notationBlocks.end(), [](const PedalBlock& a,
+                                                                       const PedalBlock& b) {
+                  if (a.startTick != b.startTick)
+                        return a.startTick < b.startTick;
+                  return a.endTick < b.endTick;
+                  });
+            const QVector<PlaybackSustainSpan> notation = notationSustainSpans(_score, staff->idx());
+            QVector<PlaybackSustainSpan> stored;
+            playbackSustainSpans(_score->synthesizerState(), staff->idx(), &stored);
+            QVector<PlaybackSustainSpan> resolved = resolvePlaybackSustainSpans(stored, notation);
+
+            for (PedalBlock block : qAsConst(notationBlocks)) {
+                  int replacement = -1;
+                  for (int i = 0; i < resolved.size(); ++i) {
+                        if (resolved[i].notationLinked()
+                            && resolved[i].sourceStartTick == block.startTick
+                            && resolved[i].sourceEndTick == block.endTick) {
+                              replacement = i;
+                              break;
+                              }
+                        }
+                  if (replacement >= 0) {
+                        const PlaybackSustainSpan span = resolved.takeAt(replacement);
+                        if (span.suppressed())
+                              continue;
+                        block.startTick = span.startTick;
+                        block.endTick = span.endTick;
+                        block.sourceStartTick = span.sourceStartTick;
+                        block.sourceEndTick = span.sourceEndTick;
+                        }
+                  _pedals.append(block);
+                  }
+            for (const PlaybackSustainSpan& span : qAsConst(resolved)) {
+                  if (span.notationLinked() || span.suppressed())
+                        continue;
                   PedalBlock block;
                   block.startTick = span.startTick;
                   block.endTick = span.endTick;
                   block.staffIdx = staff->idx();
                   _pedals.append(block);
                   }
-            }
-      for (const auto& entry : _score->spannerMap().map()) {
-            Spanner* spanner = entry.second;
-            if (!spanner || (!spanner->isPedal() && !spanner->isLetRing()))
-                  continue;
-            if (!staffIsVisible(spanner->staffIdx()))
-                  continue;
-            if (overriddenStaves.contains(spanner->staffIdx()))
-                  continue;
-            PedalBlock block;
-            block.spanner = spanner;
-            block.startTick = spanner->tick().ticks();
-            block.endTick = qMax(block.startTick + 1, spanner->tick2().ticks());
-            block.staffIdx = spanner->staffIdx();
-            block.letRing = spanner->isLetRing();
-            _pedals.append(block);
             }
       std::sort(_pedals.begin(), _pedals.end(), [](const PedalBlock& a, const PedalBlock& b) {
             if (a.startTick != b.startTick)
@@ -756,6 +774,7 @@ KeyEditorModel::NoteSnapshot KeyEditorModel::snapshot(Note* original) const
                   eventValue.ontime = event.ontime();
                   eventValue.length = event.len();
                   eventValue.pitch = event.pitch();
+                  eventValue.suppressTieTail = event.suppressTieTail();
                   value.events.append(eventValue);
                   }
             }
@@ -1207,6 +1226,7 @@ QVector<Note*> KeyEditorModel::addNote(const NoteSnapshot& snapshotValue)
                         event.setOntime(eventValue.ontime);
                         event.setLen(eventValue.length);
                         event.setPitch(eventValue.pitch);
+                        event.setSuppressTieTail(eventValue.suppressTieTail);
                         events.append(event);
                         }
                   persistUserEvents(added.front(), &events);
@@ -1386,12 +1406,12 @@ bool KeyEditorModel::applyPlaybackTimingEdits(const QVector<NoteEdit>& edits, bo
             const int rootTicks = qMax(1, anchor->actualTicks().ticks());
             const int ontime = qRound(qreal(desiredStart - anchor->tick().ticks())
                                       * NoteEvent::NOTE_LENGTH / rootTicks);
-            // The renderer appends simple tied continuations to the final
-            // event automatically. The block's visible duration already
-            // contains that tail, so do not write it into the source event a
-            // second time or every resize compounds the tie duration.
-            const int editableTicks = qMax(1, desiredEnd - desiredStart
-                                              - playbackTieTail(source, edit.eventIndex));
+            const bool replacesTieTail = source->tieFor()
+                                       && edit.eventIndex == source->playEvents().size() - 1;
+            // A piano-roll edit controls the complete sounding duration of a
+            // tied raw MIDI event. Mark the final source event so the renderer
+            // does not append the notated continuation after this length.
+            const int editableTicks = qMax(1, desiredEnd - desiredStart);
             const int length = qMax(1, qRound(qreal(editableTicks)
                                               * NoteEvent::NOTE_LENGTH / rootTicks));
             NoteEventList list = replacements.contains(source)
@@ -1402,15 +1422,18 @@ bool KeyEditorModel::applyPlaybackTimingEdits(const QVector<NoteEdit>& edits, bo
                   event.setOntime(ontime);
                   event.setLen(length);
                   event.setPitch(pitchOffset);
+                  event.setSuppressTieTail(replacesTieTail || event.suppressTieTail());
                   addedIndexes[source].append(list.size());
                   list.append(event);
                   changed = true;
                   }
             else if (event.ontime() != ontime || event.len() != length
-                     || event.pitch() != pitchOffset) {
+                     || event.pitch() != pitchOffset
+                     || (replacesTieTail && !event.suppressTieTail())) {
                   event.setOntime(ontime);
                   event.setLen(length);
                   event.setPitch(pitchOffset);
+                  event.setSuppressTieTail(replacesTieTail || event.suppressTieTail());
                   list[edit.eventIndex] = event;
                   changed = true;
                   }
@@ -1774,8 +1797,10 @@ QByteArray KeyEditorModel::encodeSnapshots(const QVector<NoteSnapshot>& snapshot
                    << quint8(value.play ? 1 : 0)
                    << quint8(value.userEvents ? 1 : 0)
                    << quint32(value.events.size());
-            for (const EventSnapshot& event : value.events)
-                  stream << qint32(event.ontime) << qint32(event.length) << qint32(event.pitch);
+            for (const EventSnapshot& event : value.events) {
+                  stream << qint32(event.ontime) << qint32(event.length) << qint32(event.pitch)
+                         << quint8(event.suppressTieTail ? 1 : 0);
+                  }
             }
       return bytes;
       }
@@ -1789,7 +1814,8 @@ QVector<KeyEditorModel::NoteSnapshot> KeyEditorModel::decodeSnapshots(const QByt
       quint16 version = 0;
       quint32 count = 0;
       stream >> magic >> version >> count;
-      if (magic != KEY_EDITOR_CLIPBOARD_MAGIC || version != KEY_EDITOR_CLIPBOARD_VERSION || count > 100000)
+      if (magic != KEY_EDITOR_CLIPBOARD_MAGIC || (version != 3 && version != KEY_EDITOR_CLIPBOARD_VERSION)
+          || count > 100000)
             return result;
       result.reserve(int(count));
       for (quint32 i = 0; i < count && stream.status() == QDataStream::Ok; ++i) {
@@ -1818,7 +1844,11 @@ QVector<KeyEditorModel::NoteSnapshot> KeyEditorModel::decodeSnapshots(const QByt
             for (quint32 eventIndex = 0; eventIndex < eventCount; ++eventIndex) {
                   qint32 ontime, length, eventPitch;
                   stream >> ontime >> length >> eventPitch;
-                  value.events.append({ int(ontime), int(length), int(eventPitch) });
+                  quint8 suppressTieTail = 0;
+                  if (version >= 4)
+                        stream >> suppressTieTail;
+                  value.events.append({ int(ontime), int(length), int(eventPitch),
+                                        suppressTieTail != 0 });
                   }
             result.append(value);
             }
@@ -1917,18 +1947,16 @@ bool KeyEditorModel::createPedal(int startTick, int endTick, int staffIdx)
       endTick = qMin(_scoreEndTick, qMax(startTick + 1, endTick));
       if (startTick >= _scoreEndTick || endTick <= startTick)
             return false;
-      QVector<PlaybackSustainSpan> spans;
-      if (!playbackSustainSpans(_score->synthesizerState(), staff->idx(), &spans)) {
-            for (const PedalBlock& existing : _pedals) {
-                  if (existing.staffIdx == staff->idx())
-                        spans.append({ existing.startTick, existing.endTick });
-                  }
-            }
-      for (const PlaybackSustainSpan& existing : qAsConst(spans)) {
-            if (startTick < existing.endTick && existing.startTick < endTick)
+      for (const PedalBlock& existing : _pedals) {
+            if (existing.staffIdx == staff->idx()
+                && startTick < existing.endTick && existing.startTick < endTick)
                   return false;
             }
-      spans.append({ startTick, endTick });
+      QVector<PlaybackSustainSpan> stored;
+      playbackSustainSpans(_score->synthesizerState(), staff->idx(), &stored);
+      QVector<PlaybackSustainSpan> spans = resolvePlaybackSustainSpans(
+         stored, notationSustainSpans(_score, staff->idx()));
+      spans.append({ startTick, endTick, -1, -1 });
       std::sort(spans.begin(), spans.end(), [](const PlaybackSustainSpan& a,
                                               const PlaybackSustainSpan& b) {
             return a.startTick < b.startTick;
@@ -1955,29 +1983,64 @@ bool KeyEditorModel::editPedal(int staffIdx, int oldStartTick, int oldEndTick,
       if (startTick >= _scoreEndTick || endTick <= startTick)
             return false;
 
-      QVector<PlaybackSustainSpan> spans;
-      if (!playbackSustainSpans(_score->synthesizerState(), staffIdx, &spans)) {
-            for (const PedalBlock& existing : _pedals) {
-                  if (existing.staffIdx == staffIdx)
-                        spans.append({ existing.startTick, existing.endTick });
-                  }
-            }
-      int editedIndex = -1;
-      for (int i = 0; i < spans.size(); ++i) {
-            if (spans[i].startTick == oldStartTick && spans[i].endTick == oldEndTick) {
-                  editedIndex = i;
+      const PedalBlock* target = nullptr;
+      for (const PedalBlock& block : _pedals) {
+            if (block.staffIdx == staffIdx && block.startTick == oldStartTick
+                && block.endTick == oldEndTick) {
+                  target = &block;
                   break;
                   }
             }
-      if (editedIndex < 0)
+      if (!target)
             return false;
-      for (int i = 0; i < spans.size(); ++i) {
-            if (i != editedIndex && startTick < spans[i].endTick && spans[i].startTick < endTick)
+      for (const PedalBlock& existing : _pedals) {
+            if (&existing != target && existing.staffIdx == staffIdx
+                && startTick < existing.endTick && existing.startTick < endTick)
                   return false;
             }
       if (oldStartTick == startTick && oldEndTick == endTick)
             return false;
-      spans[editedIndex] = { startTick, endTick };
+
+      QVector<PlaybackSustainSpan> stored;
+      playbackSustainSpans(_score->synthesizerState(), staffIdx, &stored);
+      QVector<PlaybackSustainSpan> spans = resolvePlaybackSustainSpans(
+         stored, notationSustainSpans(_score, staffIdx));
+      int editedIndex = -1;
+      if (target->spanner) {
+            const int sourceStart = target->sourceStartTick >= 0
+                                  ? target->sourceStartTick : target->spanner->tick().ticks();
+            const int sourceEnd = target->sourceEndTick >= 0
+                                ? target->sourceEndTick : target->spanner->tick2().ticks();
+            for (int i = 0; i < spans.size(); ++i) {
+                  if (spans[i].notationLinked()
+                      && spans[i].sourceStartTick == sourceStart
+                      && spans[i].sourceEndTick == sourceEnd) {
+                        editedIndex = i;
+                        break;
+                        }
+                  }
+            if (editedIndex < 0) {
+                  spans.append({ startTick, endTick, sourceStart, sourceEnd });
+                  editedIndex = spans.size() - 1;
+                  }
+            else {
+                  spans[editedIndex].startTick = startTick;
+                  spans[editedIndex].endTick = endTick;
+                  }
+            }
+      else {
+            for (int i = 0; i < spans.size(); ++i) {
+                  if (!spans[i].notationLinked() && spans[i].startTick == oldStartTick
+                      && spans[i].endTick == oldEndTick) {
+                        editedIndex = i;
+                        break;
+                        }
+                  }
+            if (editedIndex < 0)
+                  return false;
+            spans[editedIndex].startTick = startTick;
+            spans[editedIndex].endTick = endTick;
+            }
       std::sort(spans.begin(), spans.end(), [](const PlaybackSustainSpan& a,
                                               const PlaybackSustainSpan& b) {
             return a.startTick < b.startTick;
@@ -1995,23 +2058,55 @@ bool KeyEditorModel::deletePedal(int staffIdx, int startTick, int endTick)
       {
       if (!_score)
             return false;
-      QVector<PlaybackSustainSpan> spans;
-      if (!playbackSustainSpans(_score->synthesizerState(), staffIdx, &spans)) {
-            for (const PedalBlock& existing : _pedals) {
-                  if (existing.staffIdx == staffIdx)
-                        spans.append({ existing.startTick, existing.endTick });
-                  }
-            }
-      bool removed = false;
-      for (int i = 0; i < spans.size(); ++i) {
-            if (spans[i].startTick == startTick && spans[i].endTick == endTick) {
-                  spans.remove(i);
-                  removed = true;
+      const PedalBlock* target = nullptr;
+      for (const PedalBlock& block : _pedals) {
+            if (block.staffIdx == staffIdx && block.startTick == startTick
+                && block.endTick == endTick) {
+                  target = &block;
                   break;
                   }
             }
-      if (!removed)
+      if (!target)
             return false;
+
+      QVector<PlaybackSustainSpan> stored;
+      playbackSustainSpans(_score->synthesizerState(), staffIdx, &stored);
+      QVector<PlaybackSustainSpan> spans = resolvePlaybackSustainSpans(
+         stored, notationSustainSpans(_score, staffIdx));
+      int editedIndex = -1;
+      if (target->spanner) {
+            const int sourceStart = target->sourceStartTick >= 0
+                                  ? target->sourceStartTick : target->spanner->tick().ticks();
+            const int sourceEnd = target->sourceEndTick >= 0
+                                ? target->sourceEndTick : target->spanner->tick2().ticks();
+            for (int i = 0; i < spans.size(); ++i) {
+                  if (spans[i].notationLinked()
+                      && spans[i].sourceStartTick == sourceStart
+                      && spans[i].sourceEndTick == sourceEnd) {
+                        editedIndex = i;
+                        break;
+                        }
+                  }
+            if (editedIndex < 0) {
+                  spans.append({ -1, -1, sourceStart, sourceEnd });
+                  }
+            else {
+                  spans[editedIndex].startTick = -1;
+                  spans[editedIndex].endTick = -1;
+                  }
+            }
+      else {
+            for (int i = 0; i < spans.size(); ++i) {
+                  if (!spans[i].notationLinked() && spans[i].startTick == startTick
+                      && spans[i].endTick == endTick) {
+                        editedIndex = i;
+                        break;
+                        }
+                  }
+            if (editedIndex < 0)
+                  return false;
+            spans.remove(editedIndex);
+            }
       SynthesizerState state = _score->synthesizerState();
       setPlaybackSustainSpans(state, staffIdx, spans);
       _score->startCmd();

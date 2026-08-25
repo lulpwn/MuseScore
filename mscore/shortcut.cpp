@@ -2145,6 +2145,17 @@ Shortcut Shortcut::_sc[] = {
       {
          MsWidget::MAIN_WINDOW,
          STATE_NORMAL | STATE_NOTE_ENTRY | STATE_EDIT | STATE_PLAY,
+         "pianoroll",
+         QT_TRANSLATE_NOOP("action", "Piano Roll Editor"),
+         QT_TRANSLATE_NOOP("action", "Open Piano Roll Editor"),
+         QT_TRANSLATE_NOOP("action", "Open the piano roll for the active staff"),
+         Icons::Invalid_ICON,
+         Qt::ApplicationShortcut,
+         ShortcutFlags::A_SCORE
+         },
+      {
+         MsWidget::MAIN_WINDOW,
+         STATE_NORMAL | STATE_NOTE_ENTRY | STATE_EDIT | STATE_PLAY,
          "toggle-midiimportpanel",
          QT_TRANSLATE_NOOP("action","MIDI Import Panel"),
          QT_TRANSLATE_NOOP("action","Toggle 'MIDI Import Panel'"),

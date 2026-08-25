@@ -102,13 +102,20 @@ static QToolButton* makeToolButton(QWidget* parent, const QString& text,
       return button;
       }
 
-PianorollEditor::PianorollEditor(QWidget* parent)
-   : QMainWindow(parent, Qt::Window
-                         | Qt::WindowTitleHint
-                         | Qt::WindowSystemMenuHint
-                         | Qt::WindowMinMaxButtonsHint
-                         | Qt::WindowCloseButtonHint)
+PianorollEditor::PianorollEditor()
+   : QMainWindow(nullptr)
       {
+      // Keep the key editor independent from the main MuseScore window, just
+      // like the VST editor. A QWidget parent would make it an owned window on
+      // Windows even when Qt::Window is specified.
+      setAttribute(Qt::WA_NativeWindow);
+      setAttribute(Qt::WA_QuitOnClose, false);
+      setWindowFlags(Qt::Window
+                     | Qt::WindowTitleHint
+                     | Qt::WindowSystemMenuHint
+                     | Qt::WindowMinMaxButtonsHint
+                     | Qt::WindowCloseButtonHint);
+      setWindowFlag(Qt::WindowContextHelpButtonHint, false);
       _score = nullptr;
       setWindowModality(Qt::NonModal);
       setObjectName(QStringLiteral("Pianoroll"));

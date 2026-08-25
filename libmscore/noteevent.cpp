@@ -31,6 +31,8 @@ void NoteEvent::read(XmlReader& e)
                   _len = e.readInt();
             else if (tag == "velocity")
                   _velocity = e.readInt();
+            else if (tag == "suppressTieTail")
+                  _suppressTieTail = e.readBool();
             else
                   e.unknown();
             }
@@ -47,6 +49,7 @@ void NoteEvent::write(XmlWriter& xml) const
       xml.tag("ontime", _ontime, 0);
       xml.tag("len", _len, NOTE_LENGTH);
       xml.tag("velocity", _velocity, -1);
+      xml.tag("suppressTieTail", _suppressTieTail, false);
       xml.etag();
       }
 
@@ -66,7 +69,8 @@ NoteEventList::NoteEventList()
 bool NoteEvent::operator==(const NoteEvent& e) const
       {
       return (e._pitch == _pitch) && (e._ontime == _ontime)
-          && (e._len == _len) && (e._velocity == _velocity);
+          && (e._len == _len) && (e._velocity == _velocity)
+          && (e._suppressTieTail == _suppressTieTail);
       }
 
 }

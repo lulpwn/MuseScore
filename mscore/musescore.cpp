@@ -2061,6 +2061,11 @@ MuseScore::~MuseScore()
       if (autoUpdater)
             autoUpdater->cleanup();
 
+      // The piano roll is deliberately a parentless, independent native
+      // window, so it is not deleted by QWidget child ownership.
+      delete pianorollEditor;
+      pianorollEditor = nullptr;
+
       delete synti;
       synti = nullptr;
 
@@ -5135,11 +5140,19 @@ void MuseScore::handleMessage(const QString& message)
 void MuseScore::editInPianoroll(Staff* staff, Position* p)
       {
       if (pianorollEditor == 0)
-            pianorollEditor = new PianorollEditor(this);
+            pianorollEditor = new PianorollEditor;
       pianorollEditor->setScore(staff->score());
       pianorollEditor->setStaff(staff);
-      pianorollEditor->show();
-      pianorollEditor->focusOnPosition(p);
+      if (pianorollEditor->isMinimized())
+            pianorollEditor->showNormal();
+      else
+            pianorollEditor->show();
+      pianorollEditor->raise();
+      pianorollEditor->activateWindow();
+      if (p)
+            pianorollEditor->focusOnPosition(p);
+      else
+            pianorollEditor->changeSelection(staff->score()->selection().state());
       }
 
 //---------------------------------------------------------
@@ -6298,6 +6311,16 @@ void MuseScore::cmd(QAction* a, const QString& cmd)
             seq->seekEnd();
       else if (cmd == "keys")
             showKeyEditor();
+      else if (cmd == "pianoroll") {
+            if (cs->nstaves() > 0) {
+                  int track = cs->selection().isNone()
+                              ? cs->inputState().track()
+                              : cs->selection().activeTrack();
+                  if (track < 0 || track >= cs->nstaves() * VOICES)
+                        track = 0;
+                  editInPianoroll(cs->staff(track / VOICES));
+                  }
+            }
       else if (cmd == "file-new")
             newFile();
       else if (cmd == "file-open")

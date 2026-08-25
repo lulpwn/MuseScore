@@ -63,6 +63,8 @@ class KeyEditorModel : public QObject
             int startTick { 0 };
             int endTick { 1 };
             int staffIdx { 0 };
+            int sourceStartTick { -1 };
+            int sourceEndTick { -1 };
             bool letRing { false };
             };
 
@@ -81,6 +83,7 @@ class KeyEditorModel : public QObject
             int ontime { 0 };
             int length { 1000 };
             int pitch { 0 };
+            bool suppressTieTail { false };
             };
 
       struct NoteSnapshot {
@@ -122,7 +125,6 @@ class KeyEditorModel : public QObject
       QString eventKey(Note*, int eventIndex) const;
       Chord* playbackAnchor(Note*) const;
       QSet<Note*> tieChain(Note*) const;
-      int playbackTieTail(Note*, int eventIndex) const;
       bool playbackBounds(Note*, int& startTick, int& endTick) const;
       NoteSnapshot snapshot(Note*) const;
       bool usesUserEventsAt(const NoteSnapshot&, int relativeTick) const;

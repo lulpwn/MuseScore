@@ -417,7 +417,7 @@ static void collectNote(EventMap* events, int channel, const Note* note, qreal v
                   p = 127;
             int on  = tick1 + (ticks * e.ontime())/1000;
             int off = on + (ticks * e.len())/1000 - 1;
-            if (tieFor && i == nels - 1)
+            if (tieFor && i == nels - 1 && !e.suppressTieTail())
                   off += tieLen;
 
             // Get the velocity used for this note from the staff
@@ -1192,12 +1192,7 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
             };
 
       std::map<int, std::vector<std::pair<int, std::pair<bool, int> > > > channelPedalEvents;
-      QHash<int, QVector<PlaybackSustainSpan> > sustainOverrides;
-      for (int staffIdx = 0; staffIdx < score->nstaves(); ++staffIdx) {
-            QVector<PlaybackSustainSpan> spans;
-            if (playbackSustainSpans(score->synthesizerState(), staffIdx, &spans))
-                  sustainOverrides.insert(staffIdx, spans);
-            }
+      QHash<int, QVector<PlaybackSustainSpan> > notationSustain;
       struct RenderPedalSpan {
             int staff;
             int start;
@@ -1269,8 +1264,8 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
       for (const auto& sp : score->spannerMap().map()) {
             Spanner* s = sp.second;
             if (s->isPedal() || s->isLetRing()) {
-                  if (!sustainOverrides.contains(s->staffIdx()))
-                        pedalSpans.append({ s->staffIdx(), s->tick().ticks(), s->tick2().ticks() });
+                  notationSustain[s->staffIdx()].append({ s->tick().ticks(),
+                                                         s->tick2().ticks(), -1, -1 });
                   }
             else if (s->isVibrato()) {
                   int staff = s->staffIdx();
@@ -1333,9 +1328,35 @@ void MidiRenderer::renderSpanners(const Chunk& chunk, EventMap* events)
                   continue;
             }
 
-      for (auto staffIt = sustainOverrides.constBegin(); staffIt != sustainOverrides.constEnd(); ++staffIt) {
-            for (const PlaybackSustainSpan& span : staffIt.value())
-                  pedalSpans.append({ staffIt.key(), span.startTick, span.endTick });
+      for (int staffIdx = 0; staffIdx < score->nstaves(); ++staffIdx) {
+            QVector<PlaybackSustainSpan> notation = notationSustain.value(staffIdx);
+            std::sort(notation.begin(), notation.end(), [](const PlaybackSustainSpan& a,
+                                                           const PlaybackSustainSpan& b) {
+                  if (a.startTick != b.startTick)
+                        return a.startTick < b.startTick;
+                  return a.endTick < b.endTick;
+                  });
+            QVector<PlaybackSustainSpan> stored;
+            playbackSustainSpans(score->synthesizerState(), staffIdx, &stored);
+            QVector<PlaybackSustainSpan> resolved = resolvePlaybackSustainSpans(stored, notation);
+
+            for (const PlaybackSustainSpan& source : qAsConst(notation)) {
+                  bool replaced = false;
+                  for (const PlaybackSustainSpan& span : qAsConst(resolved)) {
+                        if (span.notationLinked()
+                            && span.sourceStartTick == source.startTick
+                            && span.sourceEndTick == source.endTick) {
+                              replaced = true;
+                              break;
+                              }
+                        }
+                  if (!replaced)
+                        pedalSpans.append({ staffIdx, source.startTick, source.endTick });
+                  }
+            for (const PlaybackSustainSpan& span : qAsConst(resolved)) {
+                  if (!span.suppressed())
+                        pedalSpans.append({ staffIdx, span.startTick, span.endTick });
+                  }
             }
       std::sort(pedalSpans.begin(), pedalSpans.end(), [](const RenderPedalSpan& a,
                                                         const RenderPedalSpan& b) {

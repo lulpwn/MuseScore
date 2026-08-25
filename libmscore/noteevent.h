@@ -29,12 +29,13 @@ class NoteEvent {
       int _ontime;  // one unit is 1/1000 of nominal note len
       int _len;     // one unit is 1/1000 of nominal note len
       int _velocity; // absolute MIDI velocity override, -1 uses score dynamics
+      bool _suppressTieTail; // event length already includes tied continuations
 
    public:
       constexpr static int NOTE_LENGTH = 1000;
 
-      NoteEvent() : _pitch(0), _ontime(0), _len(NOTE_LENGTH), _velocity(-1) {}
-      NoteEvent(int a, int b, int c) : _pitch(a), _ontime(b), _len(c), _velocity(-1) {}
+      NoteEvent() : _pitch(0), _ontime(0), _len(NOTE_LENGTH), _velocity(-1), _suppressTieTail(false) {}
+      NoteEvent(int a, int b, int c) : _pitch(a), _ontime(b), _len(c), _velocity(-1), _suppressTieTail(false) {}
 
       void read(XmlReader&);
       void write(XmlWriter&) const;
@@ -44,10 +45,12 @@ class NoteEvent {
       int offtime() const    { return _ontime + _len; }
       int len() const        { return _len; }
       int velocity() const   { return _velocity; }
+      bool suppressTieTail() const { return _suppressTieTail; }
       void setPitch(int v)   { _pitch = v; }
       void setOntime(int v)  { _ontime = v; }
       void setLen(int v)     { _len = v;    }
       void setVelocity(int v) { _velocity = v < 0 ? -1 : qBound(1, v, 127); }
+      void setSuppressTieTail(bool v) { _suppressTieTail = v; }
       bool operator==(const NoteEvent&) const;
       };
 

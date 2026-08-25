@@ -5,6 +5,10 @@
     <seq>Ctrl+Shift+P</seq>
     </SC>
   <SC>
+    <key>pianoroll</key>
+    <seq>Ctrl+Alt+P</seq>
+    </SC>
+  <SC>
     <key>help</key>
     <seq>F1</seq>
     </SC>
