@@ -50,6 +50,7 @@ class TestPianoRoll : public QObject, public MTest
       void renderedEventsAreIndividuallyEditable();
       void notationPitchRebasesPlaybackAdjustment();
       void removingOrnamentRegeneratesEditedPlayback();
+      void selectionDoesNotInvalidatePlayback();
       };
 
 void TestPianoRoll::allTracksProjectionAndRender()
@@ -438,6 +439,36 @@ void TestPianoRoll::renderedEventsAreIndividuallyEditable()
       model.rebuild();
       QCOMPARE(source->playEvents().size(), originalEventCount);
       QCOMPARE(model.notes().size(), originalProjectionCount);
+
+      delete testScore;
+      }
+
+void TestPianoRoll::selectionDoesNotInvalidatePlayback()
+      {
+      MasterScore* testScore = readGrandStaffScore();
+      QVERIFY(testScore);
+      Staff* staff = testScore->staff(0);
+      QVERIFY(staff);
+
+      KeyEditorModel model;
+      model.setContext(staff, *staff->part()->staves());
+      QVERIFY(!model.notes().isEmpty());
+
+      // Reproduce the important precondition from the crash: the document has
+      // an earlier edit on its undo stack, while its playback data is clean.
+      Note* note = model.notes().front().note;
+      QVERIFY(note);
+      QHash<Note*, int> velocity;
+      const int oldVelocity = model.effectiveVelocity(note);
+      velocity.insert(note, oldVelocity < 127 ? oldVelocity + 1 : oldVelocity - 1);
+      QVERIFY(model.setVelocities(velocity));
+      QVERIFY(testScore->dirty());
+      testScore->setPlaylistClean();
+      QVERIFY(!testScore->playlistDirty());
+
+      model.selectEvents({ 0 }, KeyEditorModel::SelectionOperation::Replace);
+      QCOMPARE(model.selectedEventIndexes().size(), 1);
+      QVERIFY(!testScore->playlistDirty());
 
       delete testScore;
       }

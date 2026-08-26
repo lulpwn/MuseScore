@@ -256,7 +256,13 @@ void Score::endCmd(bool rollback)
       const bool noUndo = undoStack()->current()->empty();       // nothing to undo?
       undoStack()->endMacro(noUndo);
 
-      if (dirty()) {
+      // An empty command is commonly used to propagate selection and other UI
+      // state through endCmd().  The score may already be dirty because of an
+      // earlier edit, but that does not make the empty command a playback
+      // change.  Marking the playlist dirty here leaves RepeatList pending for
+      // a lazy rebuild and can make the real-time audio thread rebuild it while
+      // processing playback.
+      if (!rollback && !noUndo && dirty()) {
             masterScore()->setPlaylistDirty();  // TODO: flag individual operations
             masterScore()->setAutosaveDirty(true);
             }
