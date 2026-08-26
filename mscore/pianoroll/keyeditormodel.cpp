@@ -79,6 +79,14 @@ static void undoEventListForLinkedNotes(Note* source, const NoteEventList& event
             }
       }
 
+static NoteEventList trackedPlaybackEvents(Note* note)
+      {
+      NoteEventList events = note ? note->playEvents() : NoteEventList();
+      for (int i = 0; i < events.size(); ++i)
+            events[i].trackPlaybackSource(i);
+      return events;
+      }
+
 static void undoVelocityForLinkedNotes(Note* source, Note::ValueType type, int offset)
       {
       if (!source)
@@ -1415,7 +1423,7 @@ bool KeyEditorModel::applyPlaybackTimingEdits(const QVector<NoteEdit>& edits, bo
             const int length = qMax(1, qRound(qreal(editableTicks)
                                               * NoteEvent::NOTE_LENGTH / rootTicks));
             NoteEventList list = replacements.contains(source)
-                               ? replacements.value(source) : source->playEvents();
+                               ? replacements.value(source) : trackedPlaybackEvents(source);
             NoteEvent event = list[edit.eventIndex];
             const int pitchOffset = qBound(-127, edit.pitch - source->ppitch(), 127);
             if (duplicate) {
@@ -1423,6 +1431,7 @@ bool KeyEditorModel::applyPlaybackTimingEdits(const QVector<NoteEdit>& edits, bo
                   event.setLen(length);
                   event.setPitch(pitchOffset);
                   event.setSuppressTieTail(replacesTieTail || event.suppressTieTail());
+                  event.detachPlaybackSource();
                   addedIndexes[source].append(list.size());
                   list.append(event);
                   changed = true;
@@ -1514,13 +1523,13 @@ bool KeyEditorModel::deleteSelection()
             return false;
       _score->startCmd();
       for (auto it = removals.begin(); it != removals.end(); ++it) {
-            NoteEventList list = it.key()->playEvents();
+            NoteEventList list = trackedPlaybackEvents(it.key());
             QVector<int> indexes = it.value();
             std::sort(indexes.begin(), indexes.end(), std::greater<int>());
             indexes.erase(std::unique(indexes.begin(), indexes.end()), indexes.end());
             for (int index : qAsConst(indexes)) {
                   if (index >= 0 && index < list.size())
-                        list.removeAt(index);
+                        list[index].setSuppressed(true);
                   }
             undoEventListForLinkedNotes(it.key(), list);
             }
@@ -1598,7 +1607,7 @@ bool KeyEditorModel::setEventVelocities(const QHash<int, int>& velocities)
             if (!note || block.eventIndex < 0 || block.eventIndex >= note->playEvents().size())
                   continue;
             NoteEventList list = replacements.contains(note)
-                               ? replacements.value(note) : note->playEvents();
+                               ? replacements.value(note) : trackedPlaybackEvents(note);
             const int value = qBound(1, it.value(), 127);
             if (list[block.eventIndex].velocity() != value) {
                   list[block.eventIndex].setVelocity(value);
@@ -1643,7 +1652,7 @@ bool KeyEditorModel::resetSelectionVelocities()
                   || note->veloType() != Note::ValueType::OFFSET_VAL
                   || note->veloOffset() != 0;
             NoteEventList list = replacements.contains(note)
-                               ? replacements.value(note) : note->playEvents();
+                               ? replacements.value(note) : trackedPlaybackEvents(note);
             if (list[block.eventIndex].velocity() >= 0) {
                   list[block.eventIndex].setVelocity(-1);
                   rawVelocityChanged = true;
@@ -1687,7 +1696,7 @@ bool KeyEditorModel::setSelectionEventTiming(int value, bool changeOntime)
             if (!note || block.eventIndex < 0 || block.eventIndex >= note->playEvents().size())
                   continue;
             NoteEventList list = replacements.contains(note)
-                               ? replacements.value(note) : note->playEvents();
+                               ? replacements.value(note) : trackedPlaybackEvents(note);
             NoteEvent& event = list[block.eventIndex];
             if (changeOntime) {
                   if (event.ontime() == value)
@@ -1719,21 +1728,21 @@ bool KeyEditorModel::setNoteEventTiming(Note* note, int eventIndex, int value, b
       {
       if (!_score || !note || eventIndex < 0 || eventIndex >= note->playEvents().size())
             return false;
-      NoteEvent* event = &note->playEvents()[eventIndex];
-      NoteEvent replacement = *event;
+      NoteEventList events = trackedPlaybackEvents(note);
+      NoteEvent& event = events[eventIndex];
       if (changeOntime) {
-            if (event->ontime() == value)
+            if (event.ontime() == value)
                   return false;
-            replacement.setOntime(value);
+            event.setOntime(value);
             }
       else {
             value = qMax(1, value);
-            if (event->len() == value)
+            if (event.len() == value)
                   return false;
-            replacement.setLen(value);
+            event.setLen(value);
             }
       _score->startCmd();
-      _score->undo(new ChangeNoteEvent(note, event, replacement));
+      undoEventListForLinkedNotes(note, events);
       _score->endCmd();
       rebuild();
       emit selectionChanged();

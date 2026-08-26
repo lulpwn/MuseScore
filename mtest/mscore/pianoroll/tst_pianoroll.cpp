@@ -48,6 +48,8 @@ class TestPianoRoll : public QObject, public MTest
       void playbackTimingDoesNotChangeNotation();
       void tiedPlaybackResizeDoesNotCompound();
       void renderedEventsAreIndividuallyEditable();
+      void notationPitchRebasesPlaybackAdjustment();
+      void removingOrnamentRegeneratesEditedPlayback();
       };
 
 void TestPianoRoll::allTracksProjectionAndRender()
@@ -422,11 +424,13 @@ void TestPianoRoll::renderedEventsAreIndividuallyEditable()
       const int originalEventCount = source->playEvents().size();
       const int originalProjectionCount = model.notes().size();
       const int notationChordSize = source->chord()->notes().size();
+      const int deletedEventIndex = model.notes()[sourceBlocks.front()].eventIndex;
 
       model.selectEvents({ sourceBlocks.front() }, KeyEditorModel::SelectionOperation::Replace);
       QCOMPARE(model.selectedEventIndexes().size(), 1);
       QVERIFY(model.deleteSelection());
-      QCOMPARE(source->playEvents().size(), originalEventCount - 1);
+      QCOMPARE(source->playEvents().size(), originalEventCount);
+      QVERIFY(source->playEvents()[deletedEventIndex].suppressed());
       QCOMPARE(model.notes().size(), originalProjectionCount - 1);
       QCOMPARE(source->chord()->notes().size(), notationChordSize);
 
@@ -435,6 +439,102 @@ void TestPianoRoll::renderedEventsAreIndividuallyEditable()
       QCOMPARE(source->playEvents().size(), originalEventCount);
       QCOMPARE(model.notes().size(), originalProjectionCount);
 
+      delete testScore;
+      }
+
+void TestPianoRoll::notationPitchRebasesPlaybackAdjustment()
+      {
+      MasterScore* testScore = readGrandStaffScore();
+      QVERIFY(testScore);
+      Staff* staff = testScore->staff(0);
+      KeyEditorModel model;
+      model.setContext(staff, *staff->part()->staves());
+      QVERIFY(!model.notes().isEmpty());
+
+      const KeyEditorModel::NoteBlock original = model.notes().front();
+      Note* note = original.note;
+      QVERIFY(note && note->chord());
+      KeyEditorModel::NoteEdit playbackEdit { note, original.startTick,
+            original.endTick, original.pitch + 2, original.staffIdx,
+            original.voice, original.eventIndex };
+      QVERIFY(model.applyPlaybackTimingEdits({ playbackEdit }));
+      int index = model.noteIndex(note, original.eventIndex);
+      QVERIFY(index >= 0);
+      const int adjustedPitch = model.notes()[index].pitch;
+      QCOMPARE(adjustedPitch, original.pitch + 2);
+
+      const int notationPitch = note->pitch() + 1;
+      testScore->startCmd();
+      testScore->undoChangePitch(note, notationPitch,
+            note->tpc1default(notationPitch), note->tpc2default(notationPitch));
+      testScore->endCmd();
+      testScore->createPlayEvents();
+      model.rebuild();
+
+      index = model.noteIndex(note, original.eventIndex);
+      QVERIFY(index >= 0);
+      QCOMPARE(model.notes()[index].pitch, adjustedPitch + 1);
+      QCOMPARE(note->pitch(), notationPitch);
+      delete testScore;
+      }
+
+void TestPianoRoll::removingOrnamentRegeneratesEditedPlayback()
+      {
+      MasterScore* testScore = readScore(
+            QStringLiteral("testscript/scripts/palette_arpeggio_gliss_1.mscx"));
+      QVERIFY(testScore);
+      Staff* staff = testScore->staff(0);
+      KeyEditorModel model;
+      model.setContext(staff, { staff });
+
+      Note* source = nullptr;
+      QVector<int> sourceBlocks;
+      QHash<Note*, QVector<int> > bySource;
+      for (int i = 0; i < model.notes().size(); ++i)
+            bySource[model.notes()[i].note].append(i);
+      for (auto it = bySource.constBegin(); it != bySource.constEnd(); ++it) {
+            if (it.key() && it.value().size() > 1) {
+                  for (Spanner* spanner : it.key()->spannerFor()) {
+                        if (spanner && spanner->isGlissando()) {
+                              source = it.key();
+                              sourceBlocks = it.value();
+                              break;
+                              }
+                        }
+                  }
+            if (source)
+                  break;
+            }
+      QVERIFY2(source, "fixture must contain a rendered glissando");
+      const int editedBlockIndex = sourceBlocks.back();
+      const KeyEditorModel::NoteBlock block = model.notes()[editedBlockIndex];
+      KeyEditorModel::NoteEdit edit { source, block.startTick + 5,
+            block.endTick + 5, block.pitch, block.staffIdx, block.voice,
+            block.eventIndex };
+      QVERIFY(model.applyPlaybackTimingEdits({ edit }));
+      QVERIFY(source->playEvents()[block.eventIndex].playbackTracked());
+
+      Spanner* glissando = nullptr;
+      for (Spanner* spanner : source->spannerFor()) {
+            if (spanner && spanner->isGlissando()) {
+                  glissando = spanner;
+                  break;
+                  }
+            }
+      QVERIFY(glissando);
+      testScore->startCmd();
+      testScore->undoRemoveElement(glissando);
+      testScore->endCmd();
+      testScore->createPlayEvents();
+      model.rebuild();
+
+      QCOMPARE(source->playEvents().size(), 1);
+      int sourceProjectionCount = 0;
+      for (const KeyEditorModel::NoteBlock& projected : model.notes()) {
+            if (projected.note == source)
+                  ++sourceProjectionCount;
+            }
+      QCOMPARE(sourceProjectionCount, 1);
       delete testScore;
       }
 

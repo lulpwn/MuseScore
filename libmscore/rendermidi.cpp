@@ -401,14 +401,24 @@ static void collectNote(EventMap* events, int channel, const Note* note, qreal v
 
       NoteEventList nel = note->playEvents();
       int nels = nel.size();
+      int audibleEvents = 0;
+      int lastAudibleEvent = -1;
+      for (int i = 0; i < nels; ++i) {
+            if (!nel[i].suppressed()) {
+                  ++audibleEvents;
+                  lastAudibleEvent = i;
+                  }
+            }
       for (int i = 0, pitch = note->ppitch(); i < nels; ++i) {
             const NoteEvent& e = nel[i]; // we make an explicit const ref, not a const copy.  no need to copy as we won't change the original object.
+            if (e.suppressed())
+                  continue;
 
             // skip if note has a tie into it and only one NoteEvent
             // its length was already added to previous note
             // if we wish to suppress first note of ornament
             // then change "nels == 1" to "i == 0", and change "break" to "continue"
-            if (tieBack && nels == 1 && !isGlissandoFor(note))
+            if (tieBack && audibleEvents == 1 && !isGlissandoFor(note))
                   break;
             int p = pitch + e.pitch();
             if (p < 0)
@@ -417,7 +427,7 @@ static void collectNote(EventMap* events, int channel, const Note* note, qreal v
                   p = 127;
             int on  = tick1 + (ticks * e.ontime())/1000;
             int off = on + (ticks * e.len())/1000 - 1;
-            if (tieFor && i == nels - 1 && !e.suppressTieTail())
+            if (tieFor && i == lastAudibleEvent && !e.suppressTieTail())
                   off += tieLen;
 
             // Get the velocity used for this note from the staff
@@ -2315,6 +2325,83 @@ static QList<NoteEventList> renderChord(Chord* chord, int gateTime, int ontime, 
 
 //---------------------------------------------------------
 //   createGraceNotesPlayEvent
+static void setGeneratedNoteEventLists(Chord* chord, QList<NoteEventList>& generated)
+      {
+      if (!chord || generated.size() != int(chord->notes().size()))
+            return;
+      if (chord->playEventType() == PlayEventType::Auto) {
+            chord->setNoteEventLists(generated);
+            return;
+            }
+
+      QList<NoteEventList> merged;
+      for (int noteIndex = 0; noteIndex < generated.size(); ++noteIndex) {
+            NoteEventList result = generated[noteIndex];
+            for (int i = 0; i < result.size(); ++i)
+                  result[i].trackPlaybackSource(i);
+
+            const NoteEventList oldEvents = chord->notes()[noteIndex]->playEvents();
+            bool listHasTracking = false;
+            for (const NoteEvent& event : oldEvents)
+                  listHasTracking = listHasTracking || event.playbackTracked();
+
+            if (!listHasTracking) {
+                  // Migrate playback events saved by earlier builds. Match
+                  // them to the closest freshly generated events so existing
+                  // edits remain audible, while future notation changes can
+                  // regenerate their underlying ornament/note events.
+                  QSet<int> usedSources;
+                  for (const NoteEvent& oldEvent : oldEvents) {
+                        int bestIndex = -1;
+                        qint64 bestCost = std::numeric_limits<qint64>::max();
+                        for (int i = 0; i < generated[noteIndex].size(); ++i) {
+                              if (usedSources.contains(i))
+                                    continue;
+                              const NoteEvent& source = generated[noteIndex][i];
+                              const qint64 cost = qint64(qAbs(oldEvent.pitch() - source.pitch())) * 1000000
+                                                + qint64(qAbs(oldEvent.ontime() - source.ontime())) * 1000
+                                                + qAbs(oldEvent.len() - source.len());
+                              if (cost < bestCost) {
+                                    bestCost = cost;
+                                    bestIndex = i;
+                                    }
+                              }
+                        NoteEvent migrated = oldEvent;
+                        if (bestIndex >= 0) {
+                              migrated.trackPlaybackSource(bestIndex, generated[noteIndex][bestIndex]);
+                              result[bestIndex] = migrated;
+                              usedSources.insert(bestIndex);
+                              }
+                        else {
+                              migrated.detachPlaybackSource();
+                              result.append(migrated);
+                              }
+                        }
+                  // A generated source missing from the old user list was
+                  // deleted in the piano roll; retain that deletion.
+                  for (int i = 0; i < generated[noteIndex].size(); ++i) {
+                        if (!usedSources.contains(i))
+                              result[i].setSuppressed(true);
+                        }
+                  merged.append(result);
+                  continue;
+                  }
+
+            for (const NoteEvent& oldEvent : oldEvents) {
+                  if (!oldEvent.playbackTracked())
+                        continue;
+                  const int sourceIndex = oldEvent.playbackSourceIndex();
+                  if (sourceIndex >= 0 && sourceIndex < generated[noteIndex].size())
+                        result[sourceIndex] = oldEvent.rebasedOnto(generated[noteIndex][sourceIndex]);
+                  else if (sourceIndex < 0)
+                        result.append(oldEvent); // piano-roll-created raw event
+                  // A source event removed by notation is intentionally dropped.
+                  }
+            merged.append(result);
+            }
+      chord->setNoteEventLists(merged);
+      }
+
 // as a side effect of createGraceNotesPlayEvents, ontime and trailtime (passed by ref)
 // are modified.  ontime reflects the time needed to play the grace-notes-before, and
 // trailtime reflects the time for the grace-notes-after.  These are used by the caller
@@ -2433,8 +2520,7 @@ void Score::createGraceNotesPlayEvents(const Fraction& tick, Chord* chord, int& 
                   el.append(nel);
                   }
 
-            if (gc->playEventType() == PlayEventType::Auto)
-                  gc->setNoteEventLists(el);
+            setGeneratedNoteEventLists(gc, el);
             graceOn += currentGraceDuration;
             }
       if (na) {
@@ -2456,8 +2542,7 @@ void Score::createGraceNotesPlayEvents(const Fraction& tick, Chord* chord, int& 
                         el.append(nel);
                         }
 
-                  if (gc->playEventType() == PlayEventType::Auto)
-                        gc->setNoteEventLists(el);
+                  setGeneratedNoteEventLists(gc, el);
                   on += graceDuration1;
                   }
             }
@@ -2508,9 +2593,7 @@ void Score::createPlayEvents(Chord* chord)
       //    render normal (and articulated) chords
       //
       QList<NoteEventList> el = renderChord(chord, gateTime, ontime, trailtime);
-      if (chord->playEventType() == PlayEventType::Auto)
-            chord->setNoteEventLists(el);
-      // don't change event list if type is PlayEventType::User
+      setGeneratedNoteEventLists(chord, el);
       }
 
 void Score::createPlayEvents(Measure const * start, Measure const * const end)
