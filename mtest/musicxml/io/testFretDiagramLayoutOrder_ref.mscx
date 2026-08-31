@@ -124,7 +124,11 @@
             </TimeSig>
           <FretDiagram>
             <fretOffset>2</fretOffset>
-            <frets>4</frets>
+            <Harmony>
+              <root>14</root>
+              <name>m</name>
+              <align>center,top</align>
+              </Harmony>
             <fretDiagram>
               <string no="0">
                 <marker>cross</marker>
@@ -153,10 +157,6 @@
               <dot>2</dot>
               </string>
             </FretDiagram>
-          <Harmony>
-            <root>14</root>
-            <name>m</name>
-            </Harmony>
           <Tempo>
             <tempo>4</tempo>
             <followText>1</followText>
@@ -785,7 +785,10 @@
       <Measure>
         <voice>
           <FretDiagram>
-            <frets>4</frets>
+            <Harmony>
+              <root>13</root>
+              <align>center,top</align>
+              </Harmony>
             <fretDiagram>
               <string no="1">
                 <dot fret="3">normal</dot>
@@ -808,9 +811,6 @@
               <dot>2</dot>
               </string>
             </FretDiagram>
-          <Harmony>
-            <root>13</root>
-            </Harmony>
           <Chord>
             <durationType>quarter</durationType>
             <StemDirection>down</StemDirection>
@@ -848,7 +848,11 @@
         <endRepeat>2</endRepeat>
         <voice>
           <FretDiagram>
-            <frets>4</frets>
+            <Harmony>
+              <root>16</root>
+              <name>7</name>
+              <align>center,top</align>
+              </Harmony>
             <fretDiagram>
               <string no="0">
                 <marker>cross</marker>
@@ -888,10 +892,6 @@
               <dot>2</dot>
               </string>
             </FretDiagram>
-          <Harmony>
-            <root>16</root>
-            <name>7</name>
-            </Harmony>
           <Spanner type="Volta">
             <Volta>
               <endHookType>1</endHookType>

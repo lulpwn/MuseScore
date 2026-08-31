@@ -3258,6 +3258,17 @@ Shortcut Shortcut::_sc[] = {
       {
          MsWidget::MAIN_WINDOW,
          STATE_NORMAL | STATE_NOTE_ENTRY | STATE_PLAY | STATE_EDIT,
+         "playback-highlight",
+         QT_TRANSLATE_NOOP("action","Playback Highligh"),
+         QT_TRANSLATE_NOOP("action","Toggle playback highlight"),
+         QT_TRANSLATE_NOOP("action","Highlight notes during playback"),
+         Icons::playback_highlight_ICON,
+         Qt::WindowShortcut,
+         ShortcutFlags::A_CHECKABLE
+         },
+      {
+         MsWidget::MAIN_WINDOW,
+         STATE_NORMAL | STATE_NOTE_ENTRY | STATE_PLAY | STATE_EDIT,
          "countin",
          QT_TRANSLATE_NOOP("action","Count-In"),
          QT_TRANSLATE_NOOP("action","Toggle 'Count-In' playback"),

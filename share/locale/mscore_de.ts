@@ -24687,7 +24687,7 @@ fehlgeschlagen</translation>
     <message>
         <location filename="../../mscore/workspacedialog.ui" line="45"/>
         <source>Select extra components to save to the workspace:</source>
-        <translation>Auswählen der zum Arbeitsplatz hinzuzufügenden Extra-Komponenten:</translation>
+        <translation>Auswahl der zum Arbeitsplatz hinzuzufügenden Extra-Komponenten:</translation>
     </message>
     <message>
         <location filename="../../mscore/workspacedialog.ui" line="54"/>
@@ -24697,7 +24697,8 @@ fehlgeschlagen</translation>
     <message>
         <location filename="../../mscore/workspacedialog.ui" line="61"/>
         <source>GUI Components</source>
-        <translation>Komponenten der grafischen Oberfläche</translation>
+        <translation>Komponenten der
+grafischen Oberfläche</translation>
     </message>
     <message>
         <location filename="../../mscore/workspacedialog.ui" line="68"/>
@@ -24707,7 +24708,8 @@ fehlgeschlagen</translation>
     <message>
         <location filename="../../mscore/workspacedialog.ui" line="75"/>
         <source>GUI Preferences</source>
-        <translation>Einstellungen der grafischen Oberfläche</translation>
+        <translation>Einstellungen der
+grafischen Oberfläche</translation>
     </message>
 </context>
 <context>

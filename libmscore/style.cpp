@@ -381,7 +381,7 @@ static const StyleType styleTypes[] {
       { Sid::fretMag,                 "fretMag",                 QVariant(1.0) },
       { Sid::fretPlacement,           "fretPlacement",           int(Placement::ABOVE) },
       { Sid::fretStrings,             "fretStrings",             6 },
-      { Sid::fretFrets,               "fretFrets",               5 },
+      { Sid::fretFrets,               "fretFrets",               4 },
       { Sid::fretNut,                 "fretNut",                 QVariant(true) },
       { Sid::fretDotSize,             "fretDotSize",             QVariant(1.0) },
       { Sid::fretStringSpacing,       "fretStringSpacing",       Spatium(0.7) },
