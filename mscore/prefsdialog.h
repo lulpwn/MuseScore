@@ -52,6 +52,9 @@ class PreferenceDialog : public AbstractDialog, private Ui::PrefsDialogBase {
       void setUseMidiOutput(bool);
       void updateValues(bool useDefaultValues = false, bool setup = false);
       void checkApplyActivation();
+#ifdef USE_PORTMIDI
+      void refreshPortMidiDeviceLists();
+#endif
 
       void applySetActive(bool active);
       void updateShortestNote();
@@ -82,6 +85,7 @@ class PreferenceDialog : public AbstractDialog, private Ui::PrefsDialogBase {
       void clearShortcutClicked();
       void defineShortcutClicked();
       void portaudioApiActivated(int idx);
+      void refreshMidiDevices();
       void resetAllValues();
       void styleFileButtonClicked();
       void recordButtonClicked(int);

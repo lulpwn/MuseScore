@@ -200,6 +200,7 @@ void Preferences::init(bool storeInMemoryOnly)
             {PREF_IO_JACK_USEJACKTRANSPORT,                        new BoolPreference(false, false)},
             {PREF_IO_MIDI_ADVANCEONRELEASE,                        new BoolPreference(true, false)},
             {PREF_IO_MIDI_ENABLEINPUT,                             new BoolPreference(true, false)},
+            {PREF_IO_MIDI_INPUTVELOCITYCURVE,                      new IntPreference(3, false)},
             {PREF_IO_MIDI_EXPANDREPEATS,                           new BoolPreference(true, false)},
             {PREF_IO_MIDI_EXPORTRPNS,                              new BoolPreference(true, false)},
             {PREF_IO_MIDI_SPACELYRICS,                             new BoolPreference(true, true)},

@@ -84,6 +84,12 @@
 #include "libmscore/volta.h"
 #include "libmscore/xml.h"
 
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+
 #ifdef AVSOMR
 #include "avsomr/avsomr.h"
 #include "avsomr/avsomrdrawer.h"
@@ -324,6 +330,19 @@ void ScoreView::objectPopup(const QPoint& pos, Element* obj)
 
       createElementPropertyMenu(obj, popup);
 
+      bool hasSelectedNotes = false;
+      for (Element* element : score()->selection().elements()) {
+            if (element && (element->isNote() || element->isChord())) {
+                  hasSelectedNotes = true;
+                  break;
+                  }
+            }
+      if (hasSelectedNotes) {
+            popup->addSeparator();
+            a = popup->addAction(tr("Play In Velocities…"));
+            a->setData("play-in-velocities");
+            }
+
       popup->addSeparator();
       a = popup->addAction(tr("Help"));
       a->setData("help");
@@ -376,12 +395,197 @@ void ScoreView::objectPopup(const QPoint& pos, Element* obj)
                   mscore->realizeChordSymbols();
                   }
             }
+      else if (cmd == "play-in-velocities")
+            startPlayInVelocities();
       else {
             _score->startCmd();
             elementPropertyAction(cmd, obj);
             if (score()->undoStack()->active())
                   _score->endCmd();
             }
+      }
+
+static QString velocityRecordingPitchName(int pitch)
+      {
+      static const char* const noteNames[] = {
+            "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
+            };
+      const int clampedPitch = qBound(0, pitch, 127);
+      return QLatin1String(noteNames[clampedPitch % 12]) + QString::number((clampedPitch / 12) - 1);
+      }
+
+bool ScoreView::startPlayInVelocities()
+      {
+      if (_velocityRecordingIndex >= 0)
+            return false;
+
+      QHash<Chord*, QSet<Note*> > selectedNotesByChord;
+      for (Element* element : score()->selection().elements()) {
+            if (!element)
+                  continue;
+            if (element->isNote()) {
+                  Note* note = toNote(element);
+                  selectedNotesByChord[note->chord()].insert(note);
+                  }
+            else if (element->isChord()) {
+                  Chord* chord = toChord(element);
+                  for (Note* note : chord->notes())
+                        selectedNotesByChord[chord].insert(note);
+                  }
+            }
+      if (selectedNotesByChord.isEmpty())
+            return false;
+
+      QVector<Chord*> orderedChords = selectedNotesByChord.keys().toVector();
+      std::sort(orderedChords.begin(), orderedChords.end(), [](const Chord* a, const Chord* b) {
+            if (a->tick() != b->tick())
+                  return a->tick() < b->tick();
+            // Grace notes have the same score tick as their principal chord.
+            // Their visual/grace order must therefore be used as a tie-breaker.
+            if (a->isGrace() != b->isGrace())
+                  return a->isGrace();
+            if (a->isGrace() && a->graceIndex() != b->graceIndex())
+                  return a->graceIndex() < b->graceIndex();
+            return a->track() < b->track();
+            });
+      VelocityRecordingTarget target;
+      bool hasTarget = false;
+      bool targetIsGrace = false;
+      Fraction targetTick;
+      for (Chord* chord : qAsConst(orderedChords)) {
+            // A piano chord may be split across staves or voices.  All
+            // selected normal notes sharing one score tick belong to the
+            // same recording step. Grace chords stay separate because their
+            // order is meaningful even when their score tick is shared.
+            const bool sameScorePosition = hasTarget && !targetIsGrace && !chord->isGrace()
+                  && targetTick == chord->tick();
+            if (!sameScorePosition) {
+                  if (!target.notes.isEmpty())
+                        _velocityRecordingTargets.append(target);
+                  target = VelocityRecordingTarget();
+                  targetTick = chord->tick();
+                  targetIsGrace = chord->isGrace();
+                  hasTarget = true;
+                  }
+            for (Note* note : selectedNotesByChord.value(chord)) {
+                  target.notes.append(note);
+                  target.expectedPitches.insert(note->pitch());
+                  }
+            }
+      if (!target.notes.isEmpty())
+            _velocityRecordingTargets.append(target);
+      if (_velocityRecordingTargets.isEmpty())
+            return false;
+
+      _velocityRecordingArmed = false;
+      _velocityRecordingIndex = 0;
+      QDialog* dialog = new QDialog(this);
+      dialog->setWindowTitle(tr("Play In Velocities"));
+      dialog->setModal(false);
+      QVBoxLayout* layout = new QVBoxLayout(dialog);
+      _velocityRecordingStatus = new QLabel(dialog);
+      _velocityRecordingStatus->setWordWrap(true);
+      layout->addWidget(_velocityRecordingStatus);
+      QDialogButtonBox* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, dialog);
+      QPushButton* startButton = buttons->addButton(tr("Start"), QDialogButtonBox::AcceptRole);
+      QPushButton* redoButton = buttons->addButton(tr("Redo"), QDialogButtonBox::ResetRole);
+      redoButton->setEnabled(false);
+      layout->addWidget(buttons);
+      connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+      connect(startButton, &QPushButton::clicked, this, [this, startButton, redoButton]() {
+            _velocityRecordingArmed = true;
+            startButton->setEnabled(false);
+            redoButton->setEnabled(true);
+            updatePlayInVelocityStatus();
+            });
+      connect(redoButton, &QPushButton::clicked, this, [this, startButton]() {
+            if (_velocityRecordingIndex < 0)
+                  return;
+            for (VelocityRecordingTarget& target : _velocityRecordingTargets)
+                  target.receivedVelocities.clear();
+            _velocityRecordingIndex = 0;
+            _velocityRecordingArmed = true;
+            startButton->setEnabled(false);
+            updatePlayInVelocityStatus();
+            });
+      connect(dialog, &QDialog::rejected, this, [this]() { stopPlayInVelocities(); });
+      connect(dialog, &QDialog::finished, this, [this]() {
+            if (_velocityRecordingIndex >= 0)
+                  stopPlayInVelocities();
+            });
+      _velocityRecordingDialog = dialog;
+      updatePlayInVelocityStatus();
+      dialog->show();
+      return true;
+      }
+
+void ScoreView::updatePlayInVelocityStatus()
+      {
+      if (!_velocityRecordingStatus || _velocityRecordingIndex < 0)
+            return;
+      if (_velocityRecordingIndex == _velocityRecordingTargets.size()) {
+            _velocityRecordingStatus->setText(tr("Velocity recording complete. Click Redo to record the selected notes again."));
+            return;
+            }
+      if (_velocityRecordingIndex > _velocityRecordingTargets.size())
+            return;
+      const VelocityRecordingTarget& target = _velocityRecordingTargets[_velocityRecordingIndex];
+      QStringList pitches;
+      for (int pitch : target.expectedPitches)
+            pitches.append(velocityRecordingPitchName(pitch));
+      _velocityRecordingStatus->setText((_velocityRecordingArmed
+         ? tr("Listening for selected note %1 of %2. Play: %3\nOnly matching MIDI notes advance recording.")
+         : tr("Ready for selected note %1 of %2. Press Start, then play: %3"))
+         .arg(_velocityRecordingIndex + 1).arg(_velocityRecordingTargets.size())
+         .arg(pitches.join(QLatin1String(", "))));
+      }
+
+void ScoreView::processPlayInVelocity(int pitch, int velocity)
+      {
+      if (!_velocityRecordingArmed || _velocityRecordingIndex < 0 || velocity <= 0
+          || _velocityRecordingIndex >= _velocityRecordingTargets.size())
+            return;
+      VelocityRecordingTarget& target = _velocityRecordingTargets[_velocityRecordingIndex];
+      if (!target.expectedPitches.contains(pitch) || target.receivedVelocities.contains(pitch))
+            return;
+      target.receivedVelocities.insert(pitch, velocity);
+      if (target.receivedVelocities.size() != target.expectedPitches.size()) {
+            updatePlayInVelocityStatus();
+            return;
+            }
+
+      // Commit each selected note/chord immediately.  Keeping an undo command
+      // open while recording would prevent MuseScore's regular MIDI-input
+      // processing (and its audition) from running on following input events.
+      score()->startCmd();
+      for (Note* note : qAsConst(target.notes)) {
+            const int recordedVelocity = target.receivedVelocities.value(note->pitch());
+            score()->undo(new ChangeVelocity(note, Note::ValueType::USER_VAL, recordedVelocity));
+            }
+      score()->endCmd();
+      ++_velocityRecordingIndex;
+      if (_velocityRecordingIndex == _velocityRecordingTargets.size()) {
+            _velocityRecordingArmed = false;
+            updatePlayInVelocityStatus();
+            }
+      else
+            updatePlayInVelocityStatus();
+      }
+
+void ScoreView::stopPlayInVelocities()
+      {
+      if (_velocityRecordingIndex < 0)
+            return;
+      _velocityRecordingTargets.clear();
+      _velocityRecordingIndex = -1;
+      _velocityRecordingArmed = false;
+      _velocityRecordingStatus = nullptr;
+      if (_velocityRecordingDialog) {
+            QDialog* dialog = _velocityRecordingDialog;
+            _velocityRecordingDialog = nullptr;
+            dialog->close();
+            }
+      update();
       }
 
 //---------------------------------------------------------
@@ -4643,6 +4847,31 @@ void ScoreView::midiNoteReceived(int pitch, bool chord, int velocity)
             triggerCmdRealtimeAdvance(); // also trigger once immediately
             }
 
+      // Observe the same MIDI input that MuseScore normally processes.  This
+      // deliberately happens after normal input handling so MIDI audition and
+      // note-entry behavior stay intact while velocities are being recorded.
+      processPlayInVelocity(pitch, velocity);
+
+      }
+
+//---------------------------------------------------------
+//   midiControllerReceived
+//    Forward the physical sustain pedal to live input audition. This is
+//    preview only: it never changes score pedal markings.
+//---------------------------------------------------------
+
+void ScoreView::midiControllerReceived(int controller, int value)
+      {
+      if (controller != CTRL_SUSTAIN || !MScore::seq)
+            return;
+
+      // Input audition uses the currently active score channel, which can
+      // differ from a selected note's stored instrument channel. Send CC64
+      // through every active mapping, just as sequencer-wide note stopping
+      // does, so the loaded VST that is sounding the preview receives it.
+      const int channelCount = int(score()->masterScore()->midiMapping().size());
+      for (int channel = 0; channel < channelCount; ++channel)
+            MScore::seq->sendEvent(NPlayEvent(ME_CONTROLLER, channel, CTRL_SUSTAIN, qBound(0, value, 127)));
       }
 
 //---------------------------------------------------------

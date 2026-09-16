@@ -25,6 +25,12 @@
 #include "libmscore/pos.h"
 #include "libmscore/property.h"
 
+#include <QPointer>
+#include <QSet>
+
+class QDialog;
+class QLabel;
+
 namespace Ms {
 
 class ChordRest;
@@ -232,11 +238,26 @@ class ScoreView : public QWidget, public MuseScoreView {
 
       bool _blockShowEdit = false;
 
+      struct VelocityRecordingTarget {
+            QVector<Note*> notes;
+            QSet<int> expectedPitches;
+            QHash<int, int> receivedVelocities;
+            };
+      QVector<VelocityRecordingTarget> _velocityRecordingTargets;
+      int _velocityRecordingIndex { -1 };
+      bool _velocityRecordingArmed { false };
+      QPointer<QDialog> _velocityRecordingDialog;
+      QLabel* _velocityRecordingStatus { nullptr };
+
       virtual void paintEvent(QPaintEvent*) override;
       void paint(const QRect&, QPainter&);
 
       void objectPopup(const QPoint&, Element*);
       void measurePopup(QContextMenuEvent* ev, Measure*);
+      bool startPlayInVelocities();
+      void processPlayInVelocity(int pitch, int velocity);
+      void stopPlayInVelocities();
+      void updatePlayInVelocityStatus();
 
       void saveChord(XmlWriter&);
 
@@ -498,6 +519,7 @@ class ScoreView : public QWidget, public MuseScoreView {
       void setCursorVisible(bool v);
       void showOmr(bool flag);
       void midiNoteReceived(int pitch, bool chord, int velocity);
+      void midiControllerReceived(int controller, int value);
 
       virtual void moveCursor() override;
 

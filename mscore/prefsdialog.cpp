@@ -73,6 +73,11 @@ PreferenceDialog::PreferenceDialog(QWidget* parent)
       setModal(true);
       shortcutsChanged = false;
 
+      // IntPreferenceItem stores a combo-box value through item data rather
+      // than its display text.  The .ui list supplies the labels only.
+      for (int index = 0; index < midiInputVelocityCurve->count(); ++index)
+            midiInputVelocityCurve->setItemData(index, index);
+
       styleName->clear();
       styleName->addItem(tr("Light"));
       styleName->addItem(tr("Dark"));
@@ -258,6 +263,9 @@ PreferenceDialog::PreferenceDialog(QWidget* parent)
       connect(useJackAudio,               &QRadioButton::toggled, this, &PreferenceDialog::nonExclusiveJackDriver);
       connect(useJackMidi,                &QRadioButton::toggled, this, &PreferenceDialog::nonExclusiveJackDriver);
       connect(rescanDrivers,              &QToolButton::clicked, this, &PreferenceDialog::restartAudioEngine);
+#ifdef USE_PORTMIDI
+      connect(refreshMidiDevicesButton,   &QPushButton::clicked, this, &PreferenceDialog::refreshMidiDevices);
+#endif
       updateRemote();
 
       advancedWidget = new PreferencesListWidget();
@@ -328,6 +336,7 @@ void PreferenceDialog::start()
             #endif
                   new BoolPreferenceItem(PREF_IO_MIDI_ADVANCEONRELEASE, advanceOnRelease),
                   new BoolPreferenceItem(PREF_IO_MIDI_ENABLEINPUT, enableMidiInput),
+                  new IntPreferenceItem(PREF_IO_MIDI_INPUTVELOCITYCURVE, midiInputVelocityCurve),
                   new BoolPreferenceItem(PREF_IO_MIDI_EXPANDREPEATS, expandRepeats),
                   new BoolPreferenceItem(PREF_EXPORT_AUDIO_NORMALIZE, normalize),
                   new BoolPreferenceItem(PREF_IO_MIDI_EXPORTRPNS, exportRPNs),
@@ -713,36 +722,8 @@ void PreferenceDialog::updateValues(bool useDefaultValues, bool setup)
                   connect(portaudioApi, QOverload<int>::of(&QComboBox::activated), this, &PreferenceDialog::portaudioApiActivated);
 #ifdef USE_PORTMIDI
                   PortMidiDriver* midiDriver = static_cast<PortMidiDriver*>(audio->mididriver());
-                  if (midiDriver) {
-                        QStringList midiInputs = midiDriver->deviceInList();
-                        int curMidiInIdx = 0;
-                        portMidiInput->clear();
-                        portMidiInput->insertItem(0," "); // note: a space to be different from the default empty string.
-                        // The current input device can be different from the saved preference if the preference was empty
-                        // because of automatic grabbing of the default input device if not explicitly told otherwise.
-                        // Therefore, comparison must be done with respect to the actual current input device name.
-                        const PmDeviceInfo* info = Pm_GetDeviceInfo(midiDriver->getInputId());
-                        QString portmidiInputDevice;
-                        if(info && (info->input))
-                              portmidiInputDevice = QString(info->interf) + "," + QString(info->name);
-                        for(int i = 0; i < midiInputs.size(); ++i) {
-                              portMidiInput->insertItem(i+1, midiInputs.at(i));
-                              if (midiInputs.at(i) == portmidiInputDevice)
-                                    curMidiInIdx = i + 1;
-                              }
-                        portMidiInput->setCurrentIndex(curMidiInIdx);
-
-                        QStringList midiOutputs = midiDriver->deviceOutList();
-                        int curMidiOutIdx = -1; // do not set a midi out device if user never selected one
-                        portMidiOutput->clear();
-                        portMidiOutput->addItem("", -1);
-                        for(int i = 0; i < midiOutputs.size(); ++i) {
-                              portMidiOutput->addItem(midiOutputs.at(i), i);
-                              if (midiOutputs.at(i) == preferences.getString(PREF_IO_PORTMIDI_OUTPUTDEVICE))
-                                    curMidiOutIdx = i + 1;
-                              }
-                        portMidiOutput->setCurrentIndex(curMidiOutIdx);
-                        }
+                  if (midiDriver)
+                        refreshPortMidiDeviceLists();
 #endif
                   }
             }
@@ -780,6 +761,63 @@ void PreferenceDialog::portaudioApiActivated(int idx)
       }
 #else
 void PreferenceDialog::portaudioApiActivated(int)  {}
+#endif
+
+#ifdef USE_PORTMIDI
+//---------------------------------------------------------
+//   refreshPortMidiDeviceLists
+//---------------------------------------------------------
+
+void PreferenceDialog::refreshPortMidiDeviceLists()
+      {
+      if (!portAudioIsUsed || !seq || !seq->driver())
+            return;
+      Portaudio* audio = static_cast<Portaudio*>(seq->driver());
+      PortMidiDriver* midiDriver = audio ? static_cast<PortMidiDriver*>(audio->mididriver()) : nullptr;
+      if (!midiDriver)
+            return;
+
+      const QString previousInput = portMidiInput->currentText();
+      const QString previousOutput = portMidiOutput->currentText();
+      const QStringList midiInputs = midiDriver->deviceInList();
+      const QStringList midiOutputs = midiDriver->deviceOutList();
+      const PmDeviceInfo* info = Pm_GetDeviceInfo(midiDriver->getInputId());
+      const QString activeInput = info && info->input
+            ? QString(info->interf) + "," + QString(info->name) : QString();
+
+      portMidiInput->blockSignals(true);
+      portMidiInput->clear();
+      portMidiInput->addItem(" "); // A space means no explicitly selected device.
+      portMidiInput->addItems(midiInputs);
+      int inputIndex = portMidiInput->findText(activeInput);
+      if (inputIndex < 0)
+            inputIndex = portMidiInput->findText(previousInput);
+      portMidiInput->setCurrentIndex(qMax(0, inputIndex));
+      portMidiInput->blockSignals(false);
+
+      portMidiOutput->blockSignals(true);
+      portMidiOutput->clear();
+      portMidiOutput->addItem("");
+      portMidiOutput->addItems(midiOutputs);
+      int outputIndex = portMidiOutput->findText(previousOutput);
+      if (outputIndex < 0)
+            outputIndex = portMidiOutput->findText(preferences.getString(PREF_IO_PORTMIDI_OUTPUTDEVICE));
+      portMidiOutput->setCurrentIndex(qMax(0, outputIndex));
+      portMidiOutput->blockSignals(false);
+      }
+
+//---------------------------------------------------------
+//   refreshMidiDevices
+//---------------------------------------------------------
+
+void PreferenceDialog::refreshMidiDevices()
+      {
+      // PortMidi on Windows does not notify MuseScore when USB MIDI devices
+      // are connected or removed. Recreating its driver forces a fresh device
+      // enumeration without restarting the application.
+      mscore->restartAudioEngine();
+      refreshPortMidiDeviceLists();
+      }
 #endif
 
 //---------------------------------------------------------

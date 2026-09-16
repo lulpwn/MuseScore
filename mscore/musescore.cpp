@@ -16,6 +16,8 @@
 #include <QStandardPaths>
 #include <QStyleFactory>
 
+#include <cmath>
+
 #include "accessibletoolbutton.h"
 #include "config.h"
 #include "drumroll.h"
@@ -194,6 +196,20 @@ namespace Ms { Synthesizer* createVst3Synth(); }
 #endif
 
 namespace Ms {
+
+static int curvedMidiInputVelocity(int velocity)
+      {
+      if (velocity <= 0)
+            return 0;
+
+      // Higher settings make a given physical key strike produce a stronger
+      // MIDI velocity. Hard is deliberately the default for a responsive
+      // piano input without changing note-off messages.
+      static const double exponents[] = { 1.50, 1.20, 1.00, 0.75, 0.55 };
+      const int curve = qBound(0, preferences.getInt(PREF_IO_MIDI_INPUTVELOCITYCURVE), 4);
+      const double normalized = qBound(1, velocity, 127) / 127.0;
+      return qBound(1, qRound(127.0 * std::pow(normalized, exponents[curve])), 127);
+      }
 
 MuseScore* mscore;
 MasterSynthesizer* synti;
@@ -3273,6 +3289,9 @@ void MuseScore::midiNoteReceived(int channel, int pitch, int velo)
       if (!isMidiInEnabled())
             return;
 
+      if (velo > 0)
+            velo = curvedMidiInputVelocity(velo);
+
 // qDebug("midiNoteReceived %d %d %d", channel, pitch, velo);
 
       if (_midiRecordId != -1) {
@@ -3354,6 +3373,8 @@ void MuseScore::midiCtrlReceived(int controller, int value)
       // when value is 0 (usually when a key is released ) nothing happens
       if (processMidiRemote(MIDI_REMOTE_TYPE_CTRL, controller, value))
             return;
+      if (cv)
+            cv->midiControllerReceived(controller, value);
       }
 
 //---------------------------------------------------------

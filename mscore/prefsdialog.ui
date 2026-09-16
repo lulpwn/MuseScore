@@ -2821,6 +2821,35 @@
             </property>
            </widget>
           </item>
+          <item row="2" column="7">
+           <widget class="QPushButton" name="refreshMidiDevicesButton">
+            <property name="toolTip">
+             <string>Re-detect connected MIDI input and output devices without restarting MuseScore.</string>
+            </property>
+            <property name="text">
+             <string>Refresh MIDI Devices</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="label_midiInputVelocityCurve">
+            <property name="text">
+             <string>MIDI input velocity curve:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QComboBox" name="midiInputVelocityCurve">
+            <property name="toolTip">
+             <string>Adjust how strongly incoming MIDI key velocities are played and recorded.</string>
+            </property>
+            <item><property name="text"><string>Softer</string></property></item>
+            <item><property name="text"><string>Soft</string></property></item>
+            <item><property name="text"><string>Medium</string></property></item>
+            <item><property name="text"><string>Hard</string></property></item>
+            <item><property name="text"><string>Harder</string></property></item>
+           </widget>
+          </item>
           <item row="0" column="2">
            <widget class="QLabel" name="portAudioDeviceLabel">
             <property name="text">
@@ -4295,6 +4324,7 @@ Adjusting latency can help synchronize your MIDI hardware with MuseScore's inter
   <tabstop>drawAntialiased</tabstop>
   <tabstop>proximity</tabstop>
   <tabstop>enableMidiInput</tabstop>
+  <tabstop>midiInputVelocityCurve</tabstop>
   <tabstop>warnPitchRange</tabstop>
   <tabstop>realtimeDelay</tabstop>
   <tabstop>playNotes</tabstop>

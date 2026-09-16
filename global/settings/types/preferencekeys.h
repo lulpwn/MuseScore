@@ -100,6 +100,7 @@
 #define PREF_IO_JACK_USEJACKTRANSPORT                       "io/jack/useJackTransport"
 #define PREF_IO_MIDI_ADVANCEONRELEASE                       "io/midi/advanceOnRelease"
 #define PREF_IO_MIDI_ENABLEINPUT                            "io/midi/enableInput"
+#define PREF_IO_MIDI_INPUTVELOCITYCURVE                     "io/midi/inputVelocityCurve"
 #define PREF_IO_MIDI_EXPANDREPEATS                          "io/midi/expandRepeats"
 #define PREF_IO_MIDI_EXPORTRPNS                             "io/midi/exportRPNs"
 #define PREF_IO_MIDI_SPACELYRICS                            "io/midi/spaceLyrics"
