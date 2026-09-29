@@ -35,6 +35,7 @@
 #include "ottava.h"
 #include "page.h"
 #include "part.h"
+#include "playbacksustain.h"
 #include "range.h"
 #include "repeat.h"
 #include "rest.h"
@@ -55,6 +56,42 @@
 #include "utils.h"
 
 namespace Ms {
+
+// A key-editor pedal adjustment is linked to its notation pedal by the
+// notation span's original ticks.  If that notation pedal is deleted, the
+// linked adjustment must leave with it.  Otherwise a newly-created pedal at
+// the same ticks would accidentally inherit an unrelated old CC64 edit.
+//
+// This is deliberately an undo command in the same macro as the removal:
+// undoing the notation deletion restores both the pedal and its adjustment.
+static void removeLinkedPlaybackSustainOverride(Score* score, const Spanner* spanner)
+      {
+      if (!score || !spanner || (!spanner->isPedal() && !spanner->isLetRing()))
+            return;
+
+      const int staffIdx = spanner->staffIdx();
+      const int sourceStart = spanner->tick().ticks();
+      const int sourceEnd = spanner->tick2().ticks();
+      QVector<PlaybackSustainSpan> spans;
+      if (!playbackSustainSpans(score->synthesizerState(), staffIdx, &spans))
+            return;
+
+      bool removed = false;
+      for (int i = spans.size() - 1; i >= 0; --i) {
+            const PlaybackSustainSpan& span = spans[i];
+            if (span.notationLinked() && span.sourceStartTick == sourceStart
+                && span.sourceEndTick == sourceEnd) {
+                  spans.remove(i);
+                  removed = true;
+                  }
+            }
+      if (!removed)
+            return;
+
+      SynthesizerState state = score->synthesizerState();
+      setPlaybackSustainSpans(state, staffIdx, spans);
+      score->undo(new ChangeSynthesizerState(score, state));
+      }
 
 //---------------------------------------------------------
 //   getSelectedNote
@@ -5140,6 +5177,8 @@ void Score::undoRemoveElement(Element* element)
       QList<Segment*> segments;
       for (ScoreElement*& ee : element->linkList()) {
             Element* e = static_cast<Element*>(ee);
+            if (e && (e->isPedal() || e->isLetRing()))
+                  removeLinkedPlaybackSustainOverride(e->score(), toSpanner(e));
             undo(new RemoveElement(e));
             if (e->parent() && (e->parent()->isSegment())) {
                   Segment* s = toSegment(e->parent());

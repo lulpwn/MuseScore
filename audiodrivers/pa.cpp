@@ -46,6 +46,10 @@ namespace Ms {
 
 static PaStream* stream;
 static std::atomic<unsigned long> outputUnderflows { 0 };
+// Do not leave the live audio callback size to the Windows MME default,
+// which can be several dozen milliseconds.  256 frames is about 5.3 ms at
+// 48 kHz and keeps CPU use bounded without the old run-time buffer setting.
+static constexpr unsigned long DEFAULT_LIVE_AUDIO_BUFFER_FRAMES = 256;
 
 //---------------------------------------------------------
 //   paCallback
@@ -134,7 +138,10 @@ bool Portaudio::init(bool)
       out.device           = idx;
       out.channelCount     = 2;
       out.sampleFormat     = paFloat32;
-      _bufferFrames        = 0;
+      const int configuredBufferFrames = preferences.getInt(PREF_IO_PORTAUDIO_BUFFERFRAMES);
+      _bufferFrames        = configuredBufferFrames > 0
+                           ? unsigned long(configuredBufferFrames)
+                           : DEFAULT_LIVE_AUDIO_BUFFER_FRAMES;
       out.suggestedLatency = di->defaultLowOutputLatency;
       out.hostApiSpecificStreamInfo = 0;
 

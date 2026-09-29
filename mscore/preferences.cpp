@@ -200,7 +200,14 @@ void Preferences::init(bool storeInMemoryOnly)
             {PREF_IO_JACK_USEJACKTRANSPORT,                        new BoolPreference(false, false)},
             {PREF_IO_MIDI_ADVANCEONRELEASE,                        new BoolPreference(true, false)},
             {PREF_IO_MIDI_ENABLEINPUT,                             new BoolPreference(true, false)},
+            // The response curve is independent from the global MIDI
+            // sensitivity adjustment below. Hard preserves the previous
+            // responsive piano-input default.
             {PREF_IO_MIDI_INPUTVELOCITYCURVE,                      new IntPreference(3, false)},
+            // Zero is neutral: it adds no gain after the selected velocity
+            // curve. Negative and positive values apply direct live-MIDI
+            // velocity gain.
+            {PREF_IO_MIDI_INPUTSENSITIVITY,                        new IntPreference(0, false)},
             {PREF_IO_MIDI_EXPANDREPEATS,                           new BoolPreference(true, false)},
             {PREF_IO_MIDI_EXPORTRPNS,                              new BoolPreference(true, false)},
             {PREF_IO_MIDI_SPACELYRICS,                             new BoolPreference(true, true)},
@@ -215,6 +222,7 @@ void Preferences::init(bool storeInMemoryOnly)
             {PREF_IO_OSC_USEREMOTECONTROL,                         new BoolPreference(false, false)},
       #ifdef USE_PORTAUDIO
             {PREF_IO_PORTAUDIO_DEVICE,                             new IntPreference(-1, false)},
+            {PREF_IO_PORTAUDIO_BUFFERFRAMES,                       new IntPreference(256, false)},
             {PREF_IO_PORTAUDIO_USEPORTAUDIO,                       new BoolPreference(defaultUsePortAudio, false)},
       #endif
       #ifdef USE_PORTMIDI

@@ -2821,6 +2821,28 @@
             </property>
            </widget>
           </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="portaudioBufferFramesLabel">
+            <property name="text">
+             <string>Audio buffer:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QComboBox" name="portaudioBufferFrames">
+            <property name="toolTip">
+             <string>Number of audio frames processed at once. Smaller values reduce live MIDI delay but need more CPU; larger values are more stable but add delay. The audio engine restarts when this is applied.</string>
+            </property>
+            <property name="accessibleName">
+             <string>Audio buffer size</string>
+            </property>
+            <item><property name="text"><string>64</string></property></item>
+            <item><property name="text"><string>128</string></property></item>
+            <item><property name="text"><string>256</string></property></item>
+            <item><property name="text"><string>512</string></property></item>
+            <item><property name="text"><string>1024</string></property></item>
+           </widget>
+          </item>
           <item row="2" column="7">
            <widget class="QPushButton" name="refreshMidiDevicesButton">
             <property name="toolTip">
@@ -2832,16 +2854,91 @@
            </widget>
           </item>
           <item row="3" column="0">
+           <widget class="QLabel" name="label_midiInputSensitivity">
+            <property name="text">
+             <string>MIDI input sensitivity:</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QWidget" name="midiInputSensitivityContainer" native="true">
+            <layout class="QHBoxLayout" name="midiInputSensitivityLayout">
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QSlider" name="midiInputSensitivity">
+               <property name="toolTip">
+                <string>Scales MIDI note velocities after the selected velocity curve. 0 adds no gain; +100 doubles values before the MIDI maximum of 127; -100 reduces them to the minimum. This does not change score playback or MIDI export.</string>
+               </property>
+               <property name="accessibleName">
+                <string>MIDI input sensitivity</string>
+               </property>
+               <property name="minimum">
+                <number>-100</number>
+               </property>
+               <property name="maximum">
+                <number>100</number>
+               </property>
+               <property name="singleStep">
+                <number>1</number>
+               </property>
+               <property name="pageStep">
+                <number>10</number>
+               </property>
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="tickPosition">
+                <enum>QSlider::TicksBelow</enum>
+               </property>
+               <property name="tickInterval">
+                <number>25</number>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QSpinBox" name="midiInputSensitivityValue">
+               <property name="minimumSize">
+                <size>
+                 <width>62</width>
+                 <height>0</height>
+                </size>
+               </property>
+               <property name="minimum">
+                <number>-100</number>
+               </property>
+               <property name="maximum">
+                <number>100</number>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+          <item row="4" column="0">
            <widget class="QLabel" name="label_midiInputVelocityCurve">
             <property name="text">
              <string>MIDI input velocity curve:</string>
             </property>
            </widget>
           </item>
-          <item row="3" column="1">
+          <item row="4" column="1">
            <widget class="QComboBox" name="midiInputVelocityCurve">
             <property name="toolTip">
-             <string>Adjust how strongly incoming MIDI key velocities are played and recorded.</string>
+             <string>Adjust the shape of the incoming MIDI velocity response before MIDI sensitivity is applied.</string>
+            </property>
+            <property name="accessibleName">
+             <string>MIDI input velocity curve</string>
             </property>
             <item><property name="text"><string>Softer</string></property></item>
             <item><property name="text"><string>Soft</string></property></item>
@@ -4325,6 +4422,7 @@ Adjusting latency can help synchronize your MIDI hardware with MuseScore's inter
   <tabstop>proximity</tabstop>
   <tabstop>enableMidiInput</tabstop>
   <tabstop>midiInputVelocityCurve</tabstop>
+  <tabstop>midiInputSensitivity</tabstop>
   <tabstop>warnPitchRange</tabstop>
   <tabstop>realtimeDelay</tabstop>
   <tabstop>playNotes</tabstop>

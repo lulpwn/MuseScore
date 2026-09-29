@@ -238,10 +238,16 @@ class ScoreView : public QWidget, public MuseScoreView {
 
       bool _blockShowEdit = false;
 
+      struct VelocityRecordingEvent {
+            Note* note { nullptr };
+            int noteEventIndex { -1 };
+            int pitch { -1 };
+            };
+
       struct VelocityRecordingTarget {
-            QVector<Note*> notes;
-            QSet<int> expectedPitches;
-            QHash<int, int> receivedVelocities;
+            QVector<VelocityRecordingEvent> events;
+            QHash<int, int> expectedPitchCounts;
+            QHash<int, QVector<int>> receivedVelocities;
             };
       QVector<VelocityRecordingTarget> _velocityRecordingTargets;
       int _velocityRecordingIndex { -1 };

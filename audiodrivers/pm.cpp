@@ -35,6 +35,12 @@
 
 namespace Ms {
 
+// Live input is used to audition a physical keyboard as well as for note
+// entry.  The old 20 ms polling cadence added up to a full 20 ms before a
+// note could even reach the synth, which is very noticeable when playing a
+// VST. Keep the poll inexpensive, but service it at a musical-input rate.
+static constexpr int MIDI_INPUT_POLL_INTERVAL_MS = 2;
+
 //---------------------------------------------------------
 //   PortMidiDriver
 //---------------------------------------------------------
@@ -54,15 +60,23 @@ PortMidiDriver::~PortMidiDriver()
       if (timer) {
             timer->stop();
             delete timer;
+            timer = nullptr;
             }
       if (inputStream) {
-            Pt_Stop();
             Pm_Close(inputStream);
+            inputStream = nullptr;
             }
       if (outputStream) {
-            Pt_Stop();
             Pm_Close(outputStream);
+            outputStream = nullptr;
             }
+      // Pm_CountDevices() initializes PortMidi lazily and its Windows backend
+      // keeps that initial device list until Pm_Terminate().  Without this
+      // teardown, rebuilding the audio driver merely reuses stale descriptors:
+      // plugged-in keyboards do not appear and unplugged ones remain visible.
+      // All streams must be closed before resetting the global enumeration.
+      Pt_Stop();
+      Pm_Terminate();
       }
 
 //---------------------------------------------------------
@@ -93,7 +107,7 @@ bool PortMidiDriver::init()
       static const int DRIVER_INFO = 0;
       static const int TIME_INFO = 0;
 
-      Pt_Start(20, 0, 0);      // timer started, 20 millisecond accuracy
+      Pt_Start(MIDI_INPUT_POLL_INTERVAL_MS, 0, 0);
 
       if (inputId != pmNoDevice) {
             PmError error = Pm_OpenInput(&inputStream,
@@ -131,7 +145,8 @@ bool PortMidiDriver::init()
             }
 
       timer = new QTimer();
-      timer->setInterval(20);       // 20 msec
+      timer->setTimerType(Qt::PreciseTimer);
+      timer->setInterval(MIDI_INPUT_POLL_INTERVAL_MS);
       timer->start();
       timer->connect(timer, SIGNAL(timeout()), seq, SLOT(midiInputReady()));
       return true;

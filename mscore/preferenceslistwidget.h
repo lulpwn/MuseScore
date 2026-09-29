@@ -22,6 +22,7 @@
 
 #include "awl/colorlabel.h"
 #include "preferences.h"
+#include <QSlider>
 
 #define PREF_VALUE_COLUMN 1
 
@@ -89,6 +90,7 @@ class IntPreferenceItem : public PreferenceItem {
       int _initialEditorIndex                   { -1 };
       QSpinBox* _editorSpinBox                  { nullptr };
       QComboBox* _editorComboBox                { nullptr };
+      QSlider* _editorSlider                     { nullptr };
       std::function<void()> _applyFunction      { nullptr };
       std::function<void()> _updateFunction     { nullptr };
 
@@ -96,6 +98,7 @@ class IntPreferenceItem : public PreferenceItem {
       IntPreferenceItem(QString name, std::function<void()> applyFunc = nullptr, std::function<void()> updateFunc = nullptr);
       IntPreferenceItem(QString name, QSpinBox* editor, std::function<void()> applyFunc = nullptr, std::function<void()> updateFunc = nullptr);
       IntPreferenceItem(QString name, QComboBox* editor, std::function<void()> applyFunc = nullptr, std::function<void()> updateFunc = nullptr);
+      IntPreferenceItem(QString name, QSlider* editor, std::function<void()> applyFunc = nullptr, std::function<void()> updateFunc = nullptr);
 
       void apply() override;
       void update(bool setup = false) override;

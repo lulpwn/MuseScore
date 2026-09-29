@@ -202,13 +202,26 @@ static int curvedMidiInputVelocity(int velocity)
       if (velocity <= 0)
             return 0;
 
-      // Higher settings make a given physical key strike produce a stronger
-      // MIDI velocity. Hard is deliberately the default for a responsive
-      // piano input without changing note-off messages.
+      // Keyboard-response presets. They deliberately preserve the full
+      // 1..127 range, unlike a simple gain which may reach the MIDI ceiling.
       static const double exponents[] = { 1.50, 1.20, 1.00, 0.75, 0.55 };
       const int curve = qBound(0, preferences.getInt(PREF_IO_MIDI_INPUTVELOCITYCURVE), 4);
       const double normalized = qBound(1, velocity, 127) / 127.0;
       return qBound(1, qRound(127.0 * std::pow(normalized, exponents[curve])), 127);
+      }
+
+static int adjustedMidiInputVelocity(int velocity)
+      {
+      if (velocity <= 0)
+            return 0;
+
+      // Keep zero completely transparent.  Sensitivity is a direct gain on
+      // physical MIDI velocity, not a second velocity curve.
+      const int sensitivity = qBound(-100, preferences.getInt(PREF_IO_MIDI_INPUTSENSITIVITY), 100);
+      if (sensitivity == 0)
+            return qBound(1, velocity, 127);
+      const double gain = 1.0 + (sensitivity / 100.0);
+      return qBound(1, qRound(qBound(1, velocity, 127) * gain), 127);
       }
 
 MuseScore* mscore;
@@ -3289,8 +3302,10 @@ void MuseScore::midiNoteReceived(int channel, int pitch, int velo)
       if (!isMidiInEnabled())
             return;
 
+      // Apply the keyboard curve first, then the independent global
+      // sensitivity gain. Both affect physical live input only.
       if (velo > 0)
-            velo = curvedMidiInputVelocity(velo);
+            velo = adjustedMidiInputVelocity(curvedMidiInputVelocity(velo));
 
 // qDebug("midiNoteReceived %d %d %d", channel, pitch, velo);
 

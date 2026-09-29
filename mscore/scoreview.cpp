@@ -419,60 +419,52 @@ bool ScoreView::startPlayInVelocities()
       if (_velocityRecordingIndex >= 0)
             return false;
 
-      QHash<Chord*, QSet<Note*> > selectedNotesByChord;
+      QSet<Note*> selectedNotes;
       for (Element* element : score()->selection().elements()) {
             if (!element)
                   continue;
             if (element->isNote()) {
-                  Note* note = toNote(element);
-                  selectedNotesByChord[note->chord()].insert(note);
+                  selectedNotes.insert(toNote(element));
                   }
             else if (element->isChord()) {
                   Chord* chord = toChord(element);
                   for (Note* note : chord->notes())
-                        selectedNotesByChord[chord].insert(note);
+                        selectedNotes.insert(note);
                   }
             }
-      if (selectedNotesByChord.isEmpty())
+      if (selectedNotes.isEmpty())
             return false;
 
-      QVector<Chord*> orderedChords = selectedNotesByChord.keys().toVector();
-      std::sort(orderedChords.begin(), orderedChords.end(), [](const Chord* a, const Chord* b) {
-            if (a->tick() != b->tick())
-                  return a->tick() < b->tick();
-            // Grace notes have the same score tick as their principal chord.
-            // Their visual/grace order must therefore be used as a tie-breaker.
-            if (a->isGrace() != b->isGrace())
-                  return a->isGrace();
-            if (a->isGrace() && a->graceIndex() != b->graceIndex())
-                  return a->graceIndex() < b->graceIndex();
-            return a->track() < b->track();
-            });
+      // Build targets from the same final event stream used for playback.
+      // Every raw event carries its actual onset plus the source Note/Event
+      // that owns it, so no notation-specific order is reconstructed here.
+      EventMap midiEvents;
+      score()->renderMidi(&midiEvents, false, false, score()->synthesizerState());
       VelocityRecordingTarget target;
-      bool hasTarget = false;
-      bool targetIsGrace = false;
-      Fraction targetTick;
-      for (Chord* chord : qAsConst(orderedChords)) {
-            // A piano chord may be split across staves or voices.  All
-            // selected normal notes sharing one score tick belong to the
-            // same recording step. Grace chords stay separate because their
-            // order is meaningful even when their score tick is shared.
-            const bool sameScorePosition = hasTarget && !targetIsGrace && !chord->isGrace()
-                  && targetTick == chord->tick();
-            if (!sameScorePosition) {
-                  if (!target.notes.isEmpty())
-                        _velocityRecordingTargets.append(target);
+      int targetTick = -1;
+      for (const auto& entry : midiEvents) {
+            const int tick = entry.first;
+            const NPlayEvent& event = entry.second;
+            if (event.type() != ME_NOTEON || event.velo() <= 0 || !event.note())
+                  continue;
+            Note* note = const_cast<Note*>(event.note());
+            const int eventIndex = event.noteEventIndex();
+            if (!selectedNotes.contains(note) || eventIndex < 0
+                || eventIndex >= note->playEvents().size())
+                  continue;
+
+            // Raw notes at one exact playback onset wait for every matching
+            // pitch, but may be entered in any order.
+            if (!target.events.isEmpty() && tick != targetTick) {
+                  _velocityRecordingTargets.append(target);
                   target = VelocityRecordingTarget();
-                  targetTick = chord->tick();
-                  targetIsGrace = chord->isGrace();
-                  hasTarget = true;
                   }
-            for (Note* note : selectedNotesByChord.value(chord)) {
-                  target.notes.append(note);
-                  target.expectedPitches.insert(note->pitch());
-                  }
+            targetTick = tick;
+            const int pitch = event.pitch();
+            target.events.append({ note, eventIndex, pitch });
+            target.expectedPitchCounts[pitch] = target.expectedPitchCounts.value(pitch) + 1;
             }
-      if (!target.notes.isEmpty())
+      if (!target.events.isEmpty())
             _velocityRecordingTargets.append(target);
       if (_velocityRecordingTargets.isEmpty())
             return false;
@@ -531,11 +523,13 @@ void ScoreView::updatePlayInVelocityStatus()
             return;
       const VelocityRecordingTarget& target = _velocityRecordingTargets[_velocityRecordingIndex];
       QStringList pitches;
-      for (int pitch : target.expectedPitches)
-            pitches.append(velocityRecordingPitchName(pitch));
+      for (auto it = target.expectedPitchCounts.constBegin(); it != target.expectedPitchCounts.constEnd(); ++it) {
+            const QString pitchName = velocityRecordingPitchName(it.key());
+            pitches.append(it.value() > 1 ? tr("%1 x%2").arg(pitchName).arg(it.value()) : pitchName);
+            }
       _velocityRecordingStatus->setText((_velocityRecordingArmed
-         ? tr("Listening for selected note %1 of %2. Play: %3\nOnly matching MIDI notes advance recording.")
-         : tr("Ready for selected note %1 of %2. Press Start, then play: %3"))
+         ? tr("Listening for raw MIDI onset %1 of %2. Play: %3\nOnly matching MIDI notes advance recording.")
+         : tr("Ready for raw MIDI onset %1 of %2. Press Start, then play: %3"))
          .arg(_velocityRecordingIndex + 1).arg(_velocityRecordingTargets.size())
          .arg(pitches.join(QLatin1String(", "))));
       }
@@ -546,21 +540,55 @@ void ScoreView::processPlayInVelocity(int pitch, int velocity)
           || _velocityRecordingIndex >= _velocityRecordingTargets.size())
             return;
       VelocityRecordingTarget& target = _velocityRecordingTargets[_velocityRecordingIndex];
-      if (!target.expectedPitches.contains(pitch) || target.receivedVelocities.contains(pitch))
+      const int expectedCount = target.expectedPitchCounts.value(pitch);
+      if (expectedCount == 0)
             return;
-      target.receivedVelocities.insert(pitch, velocity);
-      if (target.receivedVelocities.size() != target.expectedPitches.size()) {
+      QVector<int>& received = target.receivedVelocities[pitch];
+      if (received.size() >= expectedCount)
+            return;
+      received.append(velocity);
+      int expectedTotal = 0;
+      int receivedTotal = 0;
+      for (auto it = target.expectedPitchCounts.constBegin(); it != target.expectedPitchCounts.constEnd(); ++it) {
+            expectedTotal += it.value();
+            receivedTotal += target.receivedVelocities.value(it.key()).size();
+            }
+      if (receivedTotal != expectedTotal) {
             updatePlayInVelocityStatus();
             return;
             }
 
-      // Commit each selected note/chord immediately.  Keeping an undo command
-      // open while recording would prevent MuseScore's regular MIDI-input
-      // processing (and its audition) from running on following input events.
+      // Persist each raw playback event independently. This is what lets a
+      // generated sequence keep distinct velocities rather than collapsing
+      // every event back into one notation-level velocity.
+      QHash<Note*, NoteEventList> replacements;
+      QHash<int, int> consumedVelocities;
+      for (const VelocityRecordingEvent& recordedEvent : qAsConst(target.events)) {
+            if (!recordedEvent.note || recordedEvent.noteEventIndex < 0
+                || recordedEvent.noteEventIndex >= recordedEvent.note->playEvents().size())
+                  continue;
+            NoteEventList events = replacements.contains(recordedEvent.note)
+                                ? replacements.value(recordedEvent.note) : recordedEvent.note->playEvents();
+            const int velocityIndex = consumedVelocities.value(recordedEvent.pitch);
+            const QVector<int> values = target.receivedVelocities.value(recordedEvent.pitch);
+            if (velocityIndex >= values.size())
+                  continue;
+            events[recordedEvent.noteEventIndex].setVelocity(values[velocityIndex]);
+            replacements.insert(recordedEvent.note, events);
+            consumedVelocities[recordedEvent.pitch] = velocityIndex + 1;
+            }
+
       score()->startCmd();
-      for (Note* note : qAsConst(target.notes)) {
-            const int recordedVelocity = target.receivedVelocities.value(note->pitch());
-            score()->undo(new ChangeVelocity(note, Note::ValueType::USER_VAL, recordedVelocity));
+      for (auto it = replacements.begin(); it != replacements.end(); ++it) {
+            // Keep linked score/part notes in step with the raw override,
+            // exactly like the piano roll's raw-event editor.
+            for (ScoreElement* linkedElement : it.key()->linkList()) {
+                  if (!linkedElement || linkedElement->type() != ElementType::NOTE)
+                        continue;
+                  Note* linkedNote = toNote(linkedElement);
+                  if (linkedNote->score())
+                        linkedNote->score()->undo(new ChangeNoteEventList(linkedNote, it.value()));
+                  }
             }
       score()->endCmd();
       ++_velocityRecordingIndex;
@@ -4831,15 +4859,37 @@ void ScoreView::midiNoteReceived(int pitch, bool chord, int velocity)
       {
       qDebug("midiNoteReceived: pitch %d, chord %d, velocity %d", pitch, chord, velocity);
 
-      MidiInputEvent ev;
-      ev.pitch = pitch;
-      ev.chord = chord;
-      ev.velocity = velocity;
+      // Ordinary live playing does not need to edit the score. Sending it
+      // through the score command queue made MIDI audition wait behind
+      // layout/undo work, particularly noticeable while recording
+      // velocities. Route all non-note-entry playing straight to the same
+      // sequencer/VST path, so opening Play In Velocities changes nothing
+      // about the sound path or velocity behavior.
+      if (!noteEntryMode()) {
+            ChordRest* cr = score()->selection().cr();
+            const int staffIdx = cr ? cr->staffIdx() : score()->selection().staffStart();
+            Part* part = (staffIdx < 0 || staffIdx >= score()->nstaves())
+                       ? score()->staff(0)->part() : score()->staff(staffIdx)->part();
+            if (part && MScore::seq) {
+                  int auditionPitch = pitch;
+                  if (!score()->styleB(Sid::concertPitch))
+                        auditionPitch += part->instrument(score()->selection().tickStart())
+                                             ->transpose().chromatic;
+                  MScore::seq->startNote(part->instrument(score()->selection().tickStart())
+                                             ->channel(0)->channel(),
+                                         auditionPitch, velocity, 0.0);
+                  }
+            }
+      else {
+            MidiInputEvent ev;
+            ev.pitch = pitch;
+            ev.chord = chord;
+            ev.velocity = velocity;
+            score()->masterScore()->enqueueMidiEvent(ev);
 
-      score()->masterScore()->enqueueMidiEvent(ev);
-
-      if (!score()->undoStack()->active())
-            cmd((const char*)0);
+            if (!score()->undoStack()->active())
+                  cmd((const char*)0);
+            }
 
       if (!chord && velocity && !realtimeTimer->isActive() && score()->usingNoteEntryMethod(NoteEntryMethod::REALTIME_AUTO)) {
             // First note pressed in automatic real-time mode.

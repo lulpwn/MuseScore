@@ -240,6 +240,17 @@ IntPreferenceItem::IntPreferenceItem(QString name, QComboBox* editor, std::funct
       _updateFunction = updateFunc;
       }
 
+IntPreferenceItem::IntPreferenceItem(QString name, QSlider* editor, std::function<void()> applyFunc, std::function<void()> updateFunc)
+      : PreferenceItem(name),
+        _initialValue(preferences.getInt(name)),
+        _editorSlider(editor)
+      {
+      _editorSlider->setValue(_initialValue);
+      connect(_editorSlider, &QSlider::valueChanged, this, &PreferenceItem::editorValueModified);
+      _applyFunction = applyFunc;
+      _updateFunction = updateFunc;
+      }
+
 void IntPreferenceItem::apply()
       {
       if (_applyFunction) {
@@ -256,6 +267,11 @@ void IntPreferenceItem::apply()
                   int newValue = _editorComboBox->currentData().toInt();
                   PreferenceItem::apply(newValue);
                   _initialEditorIndex = _editorComboBox->currentIndex();
+                  }
+            else if (_editorSlider) {
+                  int newValue = _editorSlider->value();
+                  _initialValue = newValue;
+                  PreferenceItem::apply(newValue);
                   }
             }
       }
@@ -277,6 +293,9 @@ void IntPreferenceItem::update(bool setup)
                   else
                         _editorComboBox->setCurrentIndex(index);
                   }
+            else if (_editorSlider) {
+                  _editorSlider->setValue(preferences.getInt(name()));
+                  }
             }
       if (setup)
             setInitialValueToEditor();
@@ -292,6 +311,9 @@ void IntPreferenceItem::setDefaultValue()
             qDebug() << "Preference: " << name() << ":" << index << " != " << "-1";
             _editorComboBox->setCurrentIndex(index);
             }
+      else if (_editorSlider) {
+            _editorSlider->setValue(preferences.defaultValue(name()).toInt());
+            }
       if (_applyFunction)
             _applyFunction();
       }
@@ -302,6 +324,8 @@ QWidget* IntPreferenceItem::editor() const
             return _editorSpinBox;
       else if (_editorComboBox)
             return _editorComboBox;
+      else if (_editorSlider)
+            return _editorSlider;
       else
             Q_ASSERT(false);
       return nullptr;
@@ -314,6 +338,8 @@ bool IntPreferenceItem::isModified() const
             return _initialValue != _editorSpinBox->value();
       else if (_editorComboBox)
             return _initialEditorIndex != _editorComboBox->currentIndex();
+      else if (_editorSlider)
+            return _initialValue != _editorSlider->value();
       else
             Q_ASSERT(false);
       return false;
@@ -325,6 +351,8 @@ void IntPreferenceItem::setInitialValueToEditor()
             _initialValue = _editorSpinBox->value();
       else if (_editorComboBox)
             _initialEditorIndex = _editorComboBox->currentIndex();
+      else if (_editorSlider)
+            _initialValue = _editorSlider->value();
       }
 
 //---------------------------------------------------------

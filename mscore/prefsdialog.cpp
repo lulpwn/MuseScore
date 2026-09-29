@@ -73,10 +73,8 @@ PreferenceDialog::PreferenceDialog(QWidget* parent)
       setModal(true);
       shortcutsChanged = false;
 
-      // IntPreferenceItem stores a combo-box value through item data rather
-      // than its display text.  The .ui list supplies the labels only.
-      for (int index = 0; index < midiInputVelocityCurve->count(); ++index)
-            midiInputVelocityCurve->setItemData(index, index);
+      for (int index = 0; index < portaudioBufferFrames->count(); ++index)
+            portaudioBufferFrames->setItemData(index, portaudioBufferFrames->itemText(index).toInt());
 
       styleName->clear();
       styleName->addItem(tr("Light"));
@@ -266,6 +264,15 @@ PreferenceDialog::PreferenceDialog(QWidget* parent)
 #ifdef USE_PORTMIDI
       connect(refreshMidiDevicesButton,   &QPushButton::clicked, this, &PreferenceDialog::refreshMidiDevices);
 #endif
+      // The slider owns the preference; the spin box is a precise numeric
+      // entry/display for the same -100..+100 value.
+      connect(midiInputSensitivity, &QSlider::valueChanged,
+              midiInputSensitivityValue, &QSpinBox::setValue);
+      connect(midiInputSensitivityValue, QOverload<int>::of(&QSpinBox::valueChanged),
+              midiInputSensitivity, &QSlider::setValue);
+      midiInputSensitivityValue->setValue(midiInputSensitivity->value());
+      for (int i = 0; i < midiInputVelocityCurve->count(); ++i)
+            midiInputVelocityCurve->setItemData(i, i);
       updateRemote();
 
       advancedWidget = new PreferencesListWidget();
@@ -337,6 +344,7 @@ void PreferenceDialog::start()
                   new BoolPreferenceItem(PREF_IO_MIDI_ADVANCEONRELEASE, advanceOnRelease),
                   new BoolPreferenceItem(PREF_IO_MIDI_ENABLEINPUT, enableMidiInput),
                   new IntPreferenceItem(PREF_IO_MIDI_INPUTVELOCITYCURVE, midiInputVelocityCurve),
+                  new IntPreferenceItem(PREF_IO_MIDI_INPUTSENSITIVITY, midiInputSensitivity),
                   new BoolPreferenceItem(PREF_IO_MIDI_EXPANDREPEATS, expandRepeats),
                   new BoolPreferenceItem(PREF_EXPORT_AUDIO_NORMALIZE, normalize),
                   new BoolPreferenceItem(PREF_IO_MIDI_EXPORTRPNS, exportRPNs),
@@ -531,6 +539,7 @@ void PreferenceDialog::start()
 #ifdef USE_PORTAUDIO
                   new IntPreferenceItem(PREF_IO_PORTAUDIO_DEVICE, portaudioApi, doNothing, doNothing),
                   new IntPreferenceItem(PREF_IO_PORTAUDIO_DEVICE, portaudioDevice, doNothing, doNothing),
+                  new IntPreferenceItem(PREF_IO_PORTAUDIO_BUFFERFRAMES, portaudioBufferFrames, doNothing),
 #endif
 #ifdef USE_PORTMIDI
                   new StringPreferenceItem(PREF_IO_PORTMIDI_INPUTDEVICE, portMidiInput, doNothing, doNothing),
@@ -1439,6 +1448,13 @@ void PreferenceDialog::apply()
 #endif
 
       if (audioModified) {
+#ifdef USE_PORTAUDIO
+            const int requestedPortaudioBufferFrames = portaudioBufferFrames->currentData().toInt();
+            const bool portaudioBufferChanged = preferences.getInt(PREF_IO_PORTAUDIO_BUFFERFRAMES) != requestedPortaudioBufferFrames;
+            // Store this before recreating the driver: PortAudio reads the
+            // setting while opening its stream.
+            preferences.setPreference(PREF_IO_PORTAUDIO_BUFFERFRAMES, requestedPortaudioBufferFrames);
+#endif
             bool wasJack = (preferences.getBool(PREF_IO_JACK_USEJACKMIDI) || preferences.getBool(PREF_IO_JACK_USEJACKAUDIO));
             bool wasJackAudio = preferences.getBool(PREF_IO_JACK_USEJACKAUDIO);
             bool wasJackMidi = preferences.getBool(PREF_IO_JACK_USEJACKMIDI);
@@ -1472,6 +1488,7 @@ void PreferenceDialog::apply()
                || (preferences.getBool(PREF_IO_ALSA_USEALSAAUDIO) != alsaDriver->isChecked())
 #ifdef USE_PORTAUDIO
                || (preferences.getBool(PREF_IO_PORTAUDIO_USEPORTAUDIO) != portaudioDriver->isChecked())
+               || portaudioBufferChanged
 #endif
                || (preferences.getBool(PREF_IO_PULSEAUDIO_USEPULSEAUDIO) != pulseaudioDriver->isChecked())
 #ifdef USE_ALSA
